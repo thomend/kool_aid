@@ -1,0 +1,29 @@
+{
+    "name": "Local Devcontainer",
+    "context": "..",
+    "dockerFile": "../Dockerfile-Dev",
+    "forwardPorts": [8050],
+    "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.jupyter",
+        "charliermarsh.ruff",
+        "oderwat.indent-rainbow",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "jupyter.jupyterServerType": "local",
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/usr/bin/zsh"
+          }
+        }
+      }
+    }
+  },
+  "postCreateCommand": "python -m ipykernel install --name devcontainer --display-name 'Python 3.12 (devcontainer)' --sys-prefix"
+}
