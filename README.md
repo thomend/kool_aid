@@ -1,5 +1,5 @@
 # hackamrhein_challenge
-Repo for Hackaton hackamrhein
+Repo for Kool Aid
 
 # How to update dependencies
 uv pip compile requirements.in -o requirements.txt
