@@ -8,7 +8,7 @@ import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, categoryOf, type ColorMode } from "../map/style";
+import { ACCENT, categoryOf } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHighway, formatLength, formatPet } from "../format";
@@ -29,7 +29,6 @@ interface Props {
   data: CostSpaceData;
   meta: GraphMeta;
   scheme: Scheme;
-  mode: ColorMode;
   t: number;
   selection: Selection;
   onSelect: (s: Selection) => void;
@@ -77,7 +76,7 @@ function prepare(geo: number[], cost: number[]) {
 }
 
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, mode, t, selection, onSelect },
+  { data, meta, scheme, t, selection, onSelect },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -202,9 +201,9 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const accent = hexToRgba(ACCENT[scheme]);
 
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(mode, meta, scheme);
-    return data.edges.highway.map((h, i) => color(h, data.edges.walk_cost_m[i]));
-  }, [data, meta, mode, scheme]);
+    const color = edgeColorFn(meta, scheme);
+    return data.edges.walk_cost_m.map((cost) => color(cost));
+  }, [data, meta, scheme]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -256,7 +255,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [mode, scheme] },
+      updateTriggers: { getColor: scheme },
     }),
     selectedPath &&
       new PathLayer({

@@ -56,6 +56,12 @@ export const ChevronIcon = () => (
   </svg>
 );
 
+export const BookIcon = () => (
+  <svg {...base}>
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z" />
+  </svg>
+);
+
 export const WalkIcon = () => (
   <svg {...base} width={20} height={20} strokeWidth={2.2}>
     <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />

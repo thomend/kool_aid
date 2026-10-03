@@ -10,7 +10,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { buildStyle, categoryOf, type ColorMode } from "../map/style";
+import { buildStyle, categoryOf } from "../map/style";
 import { formatLength } from "../format";
 
 setWorkerUrl(workerUrl);
@@ -20,7 +20,6 @@ export type Selection = { kind: "node" | "edge"; id: number } | null;
 interface Props {
   meta: GraphMeta;
   scheme: Scheme;
-  mode: ColorMode;
   selection: Selection;
   onSelect: (s: Selection) => void;
   onMap: (map: MapLibreMap) => void;
@@ -44,7 +43,7 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
-export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGraphLoaded }: Props) {
+export function MapView({ meta, scheme, selection, onSelect, onMap, onGraphLoaded }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
@@ -58,7 +57,7 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, mode, meta),
+      style: buildStyle(scheme, meta),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -147,15 +146,14 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     };
   }, []);
 
-  // Restyle on theme / colour mode change (MapLibre diffs the styles).
+  // Restyle on theme change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const styleKey = useRef(`${scheme}|${mode}`);
+  const styleKey = useRef(scheme);
   useEffect(() => {
-    const key = `${scheme}|${mode}`;
-    if (key === styleKey.current) return;
-    styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, mode, meta));
-  }, [scheme, mode, meta]);
+    if (scheme === styleKey.current) return;
+    styleKey.current = scheme;
+    mapRef.current?.setStyle(buildStyle(scheme, meta));
+  }, [scheme, meta]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

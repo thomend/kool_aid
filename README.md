@@ -2,12 +2,14 @@
 
 Team Kool Aid's project for the hackamrhein challenge.
 
-An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres for now; a richer cost model (trees, steps, slope…) is planned.
+An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres, stretched by heat stress (PET from the Stadtklimaanalyse Basel-Stadt); more factors (trees, steps, slope…) are planned.
 
 The web app has two views:
 
-- **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by cost or by path type (footpath, pedestrian zone, steps, street). Click any node or edge to inspect it.
-- **Cost space**: the same graph redrawn so that each edge's on-screen length equals its cost, while staying close to its real location. Switching views animates the city between the two layouts, and a slider lets you stop anywhere in between.
+- **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by cost. Click any node or edge to inspect it.
+- **Cost space**: the same graph redrawn so that each edge's on-screen length equals its cost, while staying close to its real location. Switching views animates the city between the two layouts.
+
+A glossary (book icon next to the title) explains the network figures, the cost model and both views.
 
 Data comes from OpenStreetMap, is stored in DuckDB, and is served to a React frontend by a FastAPI backend.
 

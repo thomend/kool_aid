@@ -2,12 +2,11 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { fetchCostSpace, fetchMeta, type CostSpaceData, type GraphMeta, type NodeDetail } from "./api";
 import type { Scheme } from "./map/basemap";
-import type { ColorMode } from "./map/style";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
 import { Panel } from "./components/Panel";
 import { Inspector } from "./components/Inspector";
+import { Glossary } from "./components/Glossary";
 import type { CostSpaceHandle } from "./components/CostSpaceView";
-import { MorphSlider } from "./components/MorphSlider";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { MinusIcon, MoonIcon, PlusIcon, RecenterIcon, SunIcon } from "./components/Icons";
 
@@ -40,13 +39,15 @@ export default function App() {
   const [meta, setMeta] = useState<GraphMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
-  const [mode, setMode] = useState<ColorMode>("cost");
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const closeGlossary = useCallback(() => setGlossaryOpen(false), []);
   const focusNext = useRef(false);
   const mapRef = useRef<MapLibreMap | null>(null);
 
-  // Cost space: data is fetched on first use; `t` morphs geography (0) → cost (1)
+  // Cost space: data is fetched on first use; `t` morphs geography (0) → cost (1),
+  // animated whenever the view switches
   const costRef = useRef<CostSpaceHandle | null>(null);
   const [costReady, setCostReady] = useState(false);
   const costRefCallback = useCallback((handle: CostSpaceHandle | null) => {
@@ -149,10 +150,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
+    // The open glossary handles Escape itself
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !glossaryOpen && setSelection(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [glossaryOpen]);
 
   const select = useCallback((s: Selection, focus = false) => {
     focusNext.current = focus;
@@ -198,7 +200,6 @@ export default function App() {
           <MapView
           meta={meta}
           scheme={scheme}
-          mode={mode}
           selection={selection}
           onSelect={select}
           onMap={(m) => (mapRef.current = m)}
@@ -215,7 +216,6 @@ export default function App() {
             data={costData}
             meta={meta}
             scheme={scheme}
-            mode={mode}
             t={t}
               selection={selection}
               onSelect={select}
@@ -224,15 +224,7 @@ export default function App() {
         </div>
       )}
 
-      {meta && (
-        <Panel
-          meta={meta}
-          scheme={scheme}
-          mode={mode}
-          onModeChange={setMode}
-          layout={view === "cost-space" ? (costData?.meta ?? null) : null}
-        />
-      )}
+      <Panel onOpenGlossary={() => setGlossaryOpen(true)} />
 
       <div className="view-switch glass">
         <SegmentedControl
@@ -273,19 +265,9 @@ export default function App() {
       </div>
 
       {selection && (
-        <Inspector selection={selection} scheme={scheme} onSelect={select} onNodeLoaded={onNodeLoaded} />
+        <Inspector selection={selection} onSelect={select} onNodeLoaded={onNodeLoaded} />
       )}
 
-      {costVisible && view === "cost-space" && (
-        <MorphSlider
-          value={t}
-          onChange={(v) => {
-            if (animation.current) cancelAnimationFrame(animation.current);
-            animation.current = null;
-            setMorph(v);
-          }}
-        />
-      )}
 
       {(!graphLoaded || costStatus === "loading") && (
         <div className="loading glass" role="status">
@@ -298,6 +280,15 @@ export default function App() {
         <div className="loading glass" role="alert">
           Cost space unavailable. Run <code>scripts/build_layout.py</code>.
         </div>
+      )}
+
+      {glossaryOpen && meta && (
+        <Glossary
+          meta={meta}
+          scheme={scheme}
+          layout={costData?.meta ?? null}
+          onClose={closeGlossary}
+        />
       )}
     </div>
   );

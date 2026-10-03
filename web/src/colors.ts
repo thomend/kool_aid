@@ -2,7 +2,7 @@
 
 import type { GraphMeta } from "./api";
 import type { Scheme } from "./map/basemap";
-import { categoryOf, costStops, type ColorMode } from "./map/style";
+import { costStops } from "./map/style";
 
 export type RGBA = [number, number, number, number];
 
@@ -11,12 +11,9 @@ export function hexToRgba(hex: string, alpha = 255): RGBA {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255, alpha];
 }
 
-export function edgeColorFn(mode: ColorMode, meta: GraphMeta, scheme: Scheme) {
-  if (mode === "type") {
-    return (highway: string, _cost: number) => hexToRgba(categoryOf(highway).color[scheme]);
-  }
+export function edgeColorFn(meta: GraphMeta, scheme: Scheme) {
   const stops = costStops(meta, scheme).map(([v, c]) => [v, hexToRgba(c)] as const);
-  return (_highway: string, cost: number): RGBA => {
+  return (cost: number): RGBA => {
     if (cost <= stops[0][0]) return stops[0][1];
     for (let i = 1; i < stops.length; i++) {
       const [v1, c1] = stops[i];

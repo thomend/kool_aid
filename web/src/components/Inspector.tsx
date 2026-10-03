@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
-import type { Scheme } from "../map/basemap";
 import { categoryOf } from "../map/style";
 import { formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
@@ -8,7 +7,6 @@ import { ChevronIcon, CloseIcon } from "./Icons";
 
 interface Props {
   selection: NonNullable<Selection>;
-  scheme: Scheme;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -18,7 +16,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -54,38 +52,25 @@ export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) 
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} scheme={scheme} onSelect={onSelect} />
+        <EdgeCard edge={current.data} onSelect={onSelect} />
       ) : (
-        <NodeCard node={current.data} scheme={scheme} onSelect={onSelect} />
+        <NodeCard node={current.data} onSelect={onSelect} />
       )}
     </section>
   );
 }
 
-function Chip({ highway, scheme }: { highway: string; scheme: Scheme }) {
-  const c = categoryOf(highway);
-  return (
-    <span className="chip" style={{ "--chip": c.color[scheme] } as React.CSSProperties}>
-      {formatHighway(highway)}
-    </span>
-  );
+function Chip({ highway }: { highway: string }) {
+  return <span className="chip muted">{formatHighway(highway)}</span>;
 }
 
-function EdgeCard({
-  edge,
-  scheme,
-  onSelect,
-}: {
-  edge: EdgeSummary;
-  scheme: Scheme;
-  onSelect: Props["onSelect"];
-}) {
+function EdgeCard({ edge, onSelect }: { edge: EdgeSummary; onSelect: Props["onSelect"] }) {
   return (
     <>
       <p className="eyebrow">Edge</p>
       <h3>{edge.street_name ?? categoryOf(edge.highway).label}</h3>
       <div className="chips">
-        <Chip highway={edge.highway} scheme={scheme} />
+        <Chip highway={edge.highway} />
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
@@ -124,15 +109,7 @@ function EdgeCard({
   );
 }
 
-function NodeCard({
-  node,
-  scheme,
-  onSelect,
-}: {
-  node: NodeDetail;
-  scheme: Scheme;
-  onSelect: Props["onSelect"];
-}) {
+function NodeCard({ node, onSelect }: { node: NodeDetail; onSelect: Props["onSelect"] }) {
   const title =
     node.street_names.length > 0
       ? node.street_names.join(" · ")
@@ -156,11 +133,6 @@ function NodeCard({
         {node.edges.map((e) => (
           <li key={e.id}>
             <button onClick={() => onSelect({ kind: "edge", id: e.id })}>
-              <span
-                className="dot"
-                style={{ background: categoryOf(e.highway).color[scheme] }}
-                aria-hidden
-              />
               <span className="list-label">{e.street_name ?? formatHighway(e.highway)}</span>
               <span className="list-value">{formatLength(e.length_m)}</span>
               <ChevronIcon />
