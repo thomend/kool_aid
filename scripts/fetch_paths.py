@@ -52,13 +52,14 @@ out body geom;
 """
 
 
-def fetch_ways():
+def run_overpass(query):
+    """Run an Overpass query, trying each public instance in turn."""
     errors = []
     for url in OVERPASS_URLS:
         try:
             resp = requests.post(
                 url,
-                data={"data": QUERY},
+                data={"data": query},
                 headers={"User-Agent": USER_AGENT},
                 timeout=300,
             )
@@ -188,7 +189,7 @@ def main():
     parser.add_argument("--db", type=Path, default=Path("data/basel.duckdb"))
     args = parser.parse_args()
 
-    elements = fetch_ways()
+    elements = run_overpass(QUERY)
     rows = build_rows(elements)
     write_db(args.db, rows)
     n_streets = sum(r[0] == "street" for r in rows)

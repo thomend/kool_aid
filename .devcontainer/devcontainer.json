@@ -2,7 +2,7 @@
     "name": "Local Devcontainer",
     "context": "..",
     "dockerFile": "../Dockerfile-Dev",
-    "forwardPorts": [8050],
+    "forwardPorts": [8050, 5173],
     "customizations": {
     "vscode": {
       "extensions": [

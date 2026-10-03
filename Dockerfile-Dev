@@ -6,6 +6,10 @@ RUN apt update && apt upgrade -y && \
     pip install --no-cache-dir "pip==26.1.1" && \
     pip install --no-cache-dir "uv==0.12.22"
 
+# Node.js LTS for the web frontend (web/)
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt install -y nodejs
+
 # Install Oh My Zsh without using chsh
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended || true
 RUN sed -i 's/ZSH_THEME=".*"/ZSH_THEME="xiong-chiamiov-plus"/' /root/.zshrc
