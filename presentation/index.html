@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Walkable Basel — Team Kool Aid</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+
+  <style>
+    /* ---------- design tokens, copied from web/src/styles.css ---------- */
+    :root {
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+      --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+      --bg: #f4f2ee;
+      --text: #1d1d1f;
+      --text-2: #6e6e73;
+      --text-3: #8e8e93;
+      --accent: #007aff;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-border: rgba(255, 255, 255, 0.65);
+      --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+      --hairline: rgba(60, 60, 67, 0.12);
+      --fill: rgba(118, 118, 128, 0.12);
+
+      --radius-lg: 22px;
+      --radius-md: 14px;
+      color-scheme: light;
+    }
+
+    /* Presentations stay on the light theme on purpose — consistent on any
+       projector or OS setting, regardless of prefers-color-scheme. */
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; height: 100%; }
+
+    body {
+      background:
+        radial-gradient(1200px 700px at 15% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%),
+        radial-gradient(900px 600px at 85% 90%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 60%),
+        var(--bg);
+    }
+
+    .reveal {
+      font-family: var(--font);
+      font-size: 26px;
+      line-height: 1.5;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .reveal .slides section {
+      text-align: left;
+      height: 100%;
+    }
+
+    .reveal h1, .reveal h2, .reveal h3 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-transform: none;
+      margin: 0;
+    }
+
+    /* ---------- the slide itself is a "glass" panel, like .panel in the app ---------- */
+    .glass-card {
+      background: var(--glass);
+      backdrop-filter: saturate(180%) blur(24px);
+      -webkit-backdrop-filter: saturate(180%) blur(24px);
+      border: 0.5px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      border-radius: var(--radius-lg);
+      padding: 56px 64px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .subtle { color: var(--text-2); }
+    .footnote { font-size: 0.68em; color: var(--text-3); }
+
+    code, .mono {
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    /* ---------- panel header: app icon + title, exactly like Panel.tsx ---------- */
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .app-icon {
+      width: 68px;
+      height: 68px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(145deg, #34aadc, #007aff 55%, #5856d6);
+      box-shadow: 0 4px 12px rgba(0, 122, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      flex: none;
+    }
+
+    .app-icon svg { width: 34px; height: 34px; }
+
+    .panel-header h1 {
+      font-size: 2.3em;
+    }
+
+    .panel-header p {
+      font-size: 0.95em;
+      margin-top: 4px;
+    }
+
+    .kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.65em;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .slide-title {
+      font-size: 1.9em;
+    }
+
+    h2.section-label, .section-label {
+      font-size: 0.6em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-2);
+      margin-bottom: 4px;
+    }
+
+    .reveal ul {
+      margin: 0;
+      padding-left: 1.1em;
+    }
+    .reveal ul ul {
+      margin-top: 0.3em;
+      padding-left: 1.2em;
+    }
+    .reveal li {
+      margin-bottom: 0.55em;
+      font-size: 1em;
+    }
+    .reveal li::marker { color: var(--accent); }
+
+    .mission {
+      border-left: 3px solid var(--accent);
+      padding-left: 20px;
+    }
+    .mission .section-label { color: var(--accent); }
+    .mission p {
+      font-size: 1.15em;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      max-width: 34em;
+    }
+    .cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      flex: 1;
+      border-top: 0.5px solid var(--hairline);
+      padding-top: 18px;
+    }
+    .cols > div {
+      padding: 0 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .cols > div + div {
+      border-left: 0.5px solid var(--hairline);
+    }
+    .cols > div:first-child { padding-left: 0; }
+
+    /* ---------- legend-style rows (data sources), like .type-legend ---------- */
+    .source-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .source-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      font-size: 1em;
+    }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 0.4em;
+      flex: none;
+      background: var(--accent);
+    }
+    .source-list strong { font-weight: 600; }
+    .source-list .footnote { display: block; margin-top: 2px; }
+
+    /* ---------- segmented control mock, exact markup/classes from SegmentedControl ---------- */
+    .segmented {
+      position: relative;
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      padding: 3px;
+      border-radius: 11px;
+      background: var(--fill);
+      width: 440px;
+    }
+    .segmented-thumb {
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      left: 3px;
+      width: calc((100% - 6px) / 2);
+      border-radius: 8px;
+      background: var(--glass);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+    }
+    .segmented-thumb.pos-1 { transform: translateX(100%); }
+    .segmented span.seg-btn {
+      position: relative;
+      padding: 12px 16px;
+      font-size: 1em;
+      font-weight: 500;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .segmented span.seg-btn.active { font-weight: 600; }
+
+    /* ---------- tech badges, like .badge ---------- */
+    .pill-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      font-size: 0.68em;
+      font-weight: 600;
+      padding: 7px 16px;
+      border-radius: 999px;
+      background: var(--fill);
+      color: var(--text-2);
+    }
+
+    .todo-flag {
+      font-size: 0.75em;
+      color: var(--text-2);
+      border-left: 2px solid var(--accent);
+      padding-left: 12px;
+    }
+
+    /* ---------- reveal chrome, tinted to match ---------- */
+    .reveal .progress { color: var(--accent); }
+    .reveal .controls { color: var(--accent); }
+    .reveal .slide-number {
+      font-family: var(--mono);
+      color: var(--text-3);
+      background: transparent;
+    }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- 1. Intro -->
+      <section>
+        <div class="glass-card" style="justify-content: center; align-items: flex-start;">
+          <span class="kicker">hackamrhein · basel's urban heat problem</span>
+          <div class="panel-header">
+            <div class="app-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />
+                <path d="M9 21l2.5-6.5L14 17v4M7 12l2.5-4.5L13 8l2.5 3.5L18 12M11.5 14.5L12.5 8" />
+              </svg>
+            </div>
+            <div>
+              <h1>Walkable Basel</h1>
+              <p class="subtle">Team Kool Aid — the pedestrian network, coloured by heat</p>
+            </div>
+          </div>
+          <div class="mission">
+            <div class="section-label">The mission</div>
+            <p>
+              Show planners and residents exactly which walking routes overheat —
+              street by street, not city by city.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Challenge & approach -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">Our focus: urban heat</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">The problem</div>
+              <ul>
+                <li>Basel is already ~2°C warmer than pre-industrial times</li>
+                <li>A binding heat analysis exists (Stadtklimaanalyse) — but as a static, city-wide map</li>
+                <li>It isn't matched to the streets people actually walk every day</li>
+                <li>No one has pointed at a route and said <em>"this one overheats"</em></li>
+              </ul>
+            </div>
+            <div>
+              <div class="section-label">Our approach</div>
+              <ul>
+                <li>Model Basel's <strong>walkable network</strong> as a graph</li>
+                <li>Nodes = intersections, edges = path segments</li>
+                <li>Each edge carries a <strong>cost</strong> — today length, next heat exposure (PET)</li>
+                <li>Make the hottest streets visible and explorable, not buried in a PDF</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Data -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">Data, and our approach to it</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">Data</div>
+              <ul class="source-list">
+                <li>
+                  <span class="swatch"></span>
+                  <div>
+                    <strong>OpenStreetMap</strong> — walkable ways, rivers, district names
+                    <span class="footnote">Only source with the actual street-level pedestrian network · ODbL licence</span>
+                  </div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div>
+                    <strong>Stadtklimaanalyse Basel-Stadt</strong> (geo.bs.ch) — PET heat-stress raster, today &amp; 2030, 10&nbsp;m cells
+                    <span class="footnote">Official, binding-for-planning dataset at the resolution a single street needs</span>
+                  </div>
+                </li>
+              </ul>
+              <div class="todo-flag">
+                Planned next: Baumkataster tree canopy cover, to factor shade into the heat cost model.
+              </div>
+            </div>
+            <div>
+              <div class="section-label">Approach</div>
+              <ul>
+                <li><strong>Fetch</strong> — walkable ways via Overpass API, heat rasters (GeoTIFF) direct from geo.bs.ch</li>
+                <li><strong>Georaster join</strong> — sample each edge every metre along its geometry, reprojected to LV95, into a length-weighted mean PET</li>
+                <li><strong>Store</strong> — one <strong>DuckDB</strong> file holds the graph (vector) and the sampled heat cost (raster) side by side</li>
+                <li>Reproducible scripts, not notebooks — rerun end-to-end whenever the source data changes</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Demo bridge -->
+      <section>
+        <div class="glass-card" style="justify-content: center;">
+          <div class="panel-header">
+            <h2 class="slide-title">From slides to the live app</h2>
+          </div>
+          <div class="segmented">
+            <div class="segmented-thumb"></div>
+            <span class="seg-btn active">Geographic</span>
+            <span class="seg-btn">Cost space</span>
+          </div>
+          <ul>
+            <li><strong>Geographic view</strong> — the graph on a calm map, edges coloured by cost</li>
+            <li><strong>Cost-space view</strong> — same graph, redrawn so on-screen length = cost</li>
+            <li>Click any node or edge to inspect it; a slider morphs between the two</li>
+          </ul>
+          <p class="footnote mono">→ switching to localhost:5173 now</p>
+        </div>
+      </section>
+
+      <!-- 5. The hackathon -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">How we built it</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">Who &amp; why</div>
+              <ul>
+                <li>Team Kool Aid — [names / backgrounds]</li>
+                <li>Motivation: [add team motivation]</li>
+              </ul>
+              <div class="todo-flag">
+                Methodology details to update once the latest teammate pull is merged.
+              </div>
+            </div>
+            <div>
+              <div class="section-label">How we worked</div>
+              <ul>
+                <li>AI-assisted coding, strictly guided — architecture &amp; decisions stayed with us</li>
+                <li><code>copilot-instructions.md</code> as the guardrail: simple FastAPI, no over-abstraction</li>
+                <li>Dev container — same Python 3.12 + Node 24 env for everyone, zero setup drift</li>
+                <li>Single DuckDB file as source of truth; additive-only, no silent schema changes</li>
+              </ul>
+            </div>
+          </div>
+          <div class="pill-row">
+            <span class="pill">devcontainer</span>
+            <span class="pill">FastAPI + DuckDB</span>
+            <span class="pill">React + MapLibre + deck.gl</span>
+            <span class="pill">AI-guided, human-architected</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      controls: true,
+      progress: true,
+      center: false,
+      transition: 'fade',
+      backgroundTransition: 'fade',
+      width: 1280,
+      height: 720,
+      margin: 0.06,
+    });
+  </script>
+</body>
+</html>
