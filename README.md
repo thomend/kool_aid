@@ -28,8 +28,26 @@ cd web && npm install && npm run dev
 
 Open http://localhost:5173 in the host browser. API docs: http://localhost:8050/docs
 
+<<<<<<< HEAD
 After `cd web && npm run build`, the API also serves the built frontend at http://localhost:8050/.
 
 After rebuilding the graph or layout while the API runs: `curl -X POST localhost:8050/api/graph/reload`.
 
 The UI roadmap is in [web/PLAN.md](web/PLAN.md).
+=======
+Default pages:
+- Root: http://localhost:8050/
+- OpenAPI UI: http://localhost:8050/docs
+
+
+
+# Datasets
+
+Humanbioklimatische Situation, Kanton Basel-Stadt
+
+Source: Geodaten Kanton Basel-Stadt
+License: CC BY 4.0
+https://creativecommons.org/licenses/by/4.0/
+
+The original dataset is distributed by the Kanton Basel-Stadt.
+>>>>>>> 96207cefcce5a0b21d9fd6a7fd826d4b38ba2232
