@@ -20,6 +20,8 @@ interface Props {
   onReliefChange: (relief: Relief) => void;
   infoOpen: boolean;
   onToggleInfo: () => void;
+  /** Extra sections (route comparison), shown above the legend. */
+  children?: React.ReactNode;
 }
 
 export function Panel({
@@ -31,6 +33,7 @@ export function Panel({
   onReliefChange,
   infoOpen,
   onToggleInfo,
+  children,
 }: Props) {
   return (
     <aside className="panel glass">
@@ -53,6 +56,7 @@ export function Panel({
       </header>
       <ProfilePicker profile={profile} onChange={onProfileChange} />
       <ReliefToggles relief={relief} onChange={onReliefChange} />
+      {children}
       <HeatLegend meta={meta} scheme={scheme} profile={profile} />
     </aside>
   );

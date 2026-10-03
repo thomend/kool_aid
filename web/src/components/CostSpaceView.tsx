@@ -6,9 +6,9 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
 import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl/core";
 import { PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
-import type { CostSpaceData, GraphMeta } from "../api";
+import type { CostSpaceData, GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, NO_DATA, categoryOf } from "../map/style";
+import { ACCENT, NO_DATA, ROUTE_COLOR, categoryOf } from "../map/style";
 import { heatFactor, referenceMedian } from "../costModel";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
@@ -32,6 +32,8 @@ interface Props {
   scheme: Scheme;
   t: number;
   selection: Selection;
+  /** Route comparison to draw, if any. */
+  routes: RouteComparison | null;
   onSelect: (s: Selection) => void;
 }
 
@@ -160,7 +162,7 @@ const PROFILE_TRANSITION_MS = 900;
 const easeInOutCubic = (k: number) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
 
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, t, selection, onSelect },
+  { data, meta, scheme, t, selection, onSelect, routes },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -332,6 +334,22 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       : edgePositions.subarray(prepared.starts[selectedEdge] * 2, prepared.starts[selectedEdge + 1] * 2);
   const selectedNode = selection?.kind === "node" ? positionOfNode(selection.id) : null;
 
+  // Routes: their edges at the current morph state, one path per edge
+  const routePaths = (kind: "shortest" | "coolest") =>
+    (routes?.[kind].edges ?? []).flatMap((id) => {
+      const i = prepared.edgeIndex.get(id);
+      return i === undefined
+        ? []
+        : [edgePositions.subarray(prepared.starts[i] * 2, prepared.starts[i + 1] * 2)];
+    });
+  const routeEnds = routes
+    ? [
+        { kind: "start", position: positionOfNode(routes.start.node) },
+        { kind: "end", position: positionOfNode(routes.end.node) },
+      ].filter((p): p is { kind: string; position: [number, number] } => p.position !== null)
+    : [];
+  const routeWidth = edgeWidthAtZoom(mapZoom);
+
   const layers = [
     // Cells tinted by how much bigger (red) or smaller (teal) they feel; they
     // fade in with the morph, as on the map they mean nothing
@@ -433,6 +451,59 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       updateTriggers: { getRadius: Math.round(mapZoom * 4), getFillColor: scheme, getLineColor: scheme },
     }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-casing",
+        data: [...routePaths("shortest"), ...routePaths("coolest")],
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(palette.surface, 230),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 2.6 + 4,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-shortest",
+        data: routePaths("shortest"),
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(ROUTE_COLOR.shortest[scheme]),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 1.1 + 1.5,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-coolest",
+        data: routePaths("coolest"),
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(ROUTE_COLOR.coolest[scheme]),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 1.5 + 2,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new ScatterplotLayer({
+        id: "route-points",
+        data: routeEnds,
+        getPosition: (d) => d.position,
+        radiusUnits: "pixels",
+        getRadius: mapZoom > 16 ? 8 : 6,
+        getFillColor: (d) => hexToRgba(d.kind === "start" ? palette.surface : ROUTE_COLOR.coolest[scheme]),
+        getLineColor: hexToRgba(ROUTE_COLOR.coolest[scheme]),
+        stroked: true,
+        lineWidthUnits: "pixels",
+        getLineWidth: 3,
+        updateTriggers: { getFillColor: scheme, getLineColor: scheme },
+      }),
     selectedNode &&
       new ScatterplotLayer({
         id: "selected-node",

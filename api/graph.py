@@ -132,6 +132,7 @@ class _Store:
             for n in nodes
         }
         self.edges = {}
+        self.coords = {}  # edge id -> [[lon, lat], ...] from source to target (for routes)
         self.node_edges = {n: [] for n in self.nodes}
         edge_features = []
         for row in edges:
@@ -158,11 +159,12 @@ class _Store:
             if edge["target"] != edge["source"]:
                 self.node_edges[edge["target"]].append(edge["id"])
             coords = shapely.get_coordinates(shapely.from_wkt(wkt)).round(COORD_DECIMALS)
+            self.coords[edge["id"]] = coords.tolist()
             edge_features.append(
                 {
                     "type": "Feature",
                     "id": edge["id"],
-                    "geometry": {"type": "LineString", "coordinates": coords.tolist()},
+                    "geometry": {"type": "LineString", "coordinates": self.coords[edge["id"]]},
                     # nulls left out, so MapLibre's "has" tells missing values apart
                     "properties": {k: v for k, v in edge.items() if v is not None},
                 }

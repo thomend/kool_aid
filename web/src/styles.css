@@ -121,6 +121,8 @@ code,
   display: flex;
   flex-direction: column;
   gap: 18px;
+  max-height: calc(100% - 2 * var(--gutter));
+  overflow-y: auto;
   animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -189,6 +191,94 @@ h1 {
 
 .profiles.toggles {
   grid-template-columns: repeat(2, 1fr);
+}
+
+/* ---------- route comparison ---------- */
+
+.route-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pill-button {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--fill);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pill-button:hover {
+  background: var(--fill-hover);
+}
+
+.pill-button[aria-pressed="true"] {
+  color: white;
+  background: var(--accent);
+}
+
+.pill-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.text-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.text-button:hover {
+  text-decoration: underline;
+}
+
+.route-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.route-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.route-swatch {
+  width: 18px;
+  height: 0;
+  border-top: 3px solid var(--swatch);
+  flex: none;
+}
+
+.route-swatch.dashed {
+  border-top-style: dashed;
+}
+
+.route-label {
+  font-weight: 600;
+}
+
+.route-value {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
+.route-error {
+  color: #e0262f;
 }
 
 .profile {
@@ -445,7 +535,7 @@ button:focus-visible {
 
 .inspector {
   position: absolute;
-  left: var(--gutter);
+  right: var(--gutter);
   bottom: calc(var(--gutter) + 8px);
   width: 300px;
   max-height: calc(100% - 200px);

@@ -8,6 +8,7 @@ The web app has two views:
 
 - **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by heat cost per metre relative to a typical metre of Basel (teal = cooler, red = hotter). Click any node or edge to inspect it.
 - **Cost space**: Basel as it feels on a hot afternoon. A cartogram grows every neighbourhood by how much harder it is to walk than a typical metre without trees and fountains and shrinks it where it is easier (exaggerated: area grows with the heat cost to the power of 6, so hot blocks get up to ~5× bigger); streets, rivers, labels and a background grid all warp with it, without ever folding. Switching views animates the city between the two layouts, and a slider lets you stop anywhere in between.
+- **Compare routes**: pick a start and a destination on the map to see the shortest route next to the coolest one (lowest walking cost for the chosen heat profile, tree shade and fountains), with how much longer the cool route is and how much heat stress it avoids. Both are drawn on the map and in the cost space.
 
 Data comes from OpenStreetMap, is stored in DuckDB, and is served to a React frontend by a FastAPI backend.
 
@@ -76,6 +77,7 @@ curl -X POST localhost:8050/api/graph/reload
 | `GET /api/graph/edges` · `/nodes` | The whole graph as GeoJSON |
 | `GET /api/graph/edges/{id}` · `/nodes/{id}` | Details of one edge or node |
 | `GET /api/layout/cost-space?profile=medium&trees=true&fountains=true` | Node and edge positions on the map and in cost space for a heat profile (`low`, `medium`, `high`), with or without tree shade and fountains |
+| `GET /api/route?start=lon,lat&end=lon,lat&profile=medium&trees=true&fountains=true` | Shortest and coolest walking route between two points (snapped to the network, max. 300 m away): geometry, length, walking time, walking cost, shade, PET |
 | `POST /api/graph/reload` | Reload the database after a rebuild |
 
 ## Good to know

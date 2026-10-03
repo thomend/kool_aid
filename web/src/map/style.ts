@@ -195,6 +195,61 @@ function graphLayers(
   ];
 }
 
+// Route comparison: the coolest route in blue, the shortest one dashed
+export const ROUTE_SOURCE = "routes";
+export const ROUTE_POINTS_SOURCE = "route-points";
+export const ROUTE_COLOR: Record<"coolest" | "shortest", Record<Scheme, string>> = {
+  coolest: { light: "#007aff", dark: "#0a84ff" },
+  shortest: { light: "#3a3a3c", dark: "#e5e5ea" },
+};
+const emptyCollection = (): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: [] });
+
+function routeLayers(scheme: Scheme): LayerSpecification[] {
+  const width = (w: number): ExpressionSpecification =>
+    ["interpolate", ["exponential", 1.5], ["zoom"], 12, w, 16, w * 2, 19, w * 3.5];
+  const isKind = (kind: string): ExpressionSpecification => ["==", ["get", "kind"], kind];
+  return [
+    {
+      id: "route-casing",
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": SURFACE[scheme], "line-width": width(5), "line-opacity": 0.9 },
+    },
+    {
+      id: "route-shortest",
+      type: "line",
+      source: ROUTE_SOURCE,
+      filter: isKind("shortest"),
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": ROUTE_COLOR.shortest[scheme],
+        "line-width": width(2.2),
+        "line-dasharray": [1.5, 1.2],
+      },
+    },
+    {
+      id: "route-coolest",
+      type: "line",
+      source: ROUTE_SOURCE,
+      filter: isKind("coolest"),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ROUTE_COLOR.coolest[scheme], "line-width": width(3) },
+    },
+    {
+      id: "route-points",
+      type: "circle",
+      source: ROUTE_POINTS_SOURCE,
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 5, 17, 8],
+        "circle-color": ["match", ["get", "kind"], "start", SURFACE[scheme], ROUTE_COLOR.coolest[scheme]],
+        "circle-stroke-color": ROUTE_COLOR.coolest[scheme],
+        "circle-stroke-width": 3,
+      },
+    },
+  ];
+}
+
 export function buildStyle(
   scheme: Scheme,
   model: CostModel | null,
@@ -210,7 +265,10 @@ export function buildStyle(
       ...BASEMAP_SOURCE,
       "graph-edges": { type: "geojson", data: EDGES_URL, promoteId: "id" },
       "graph-nodes": { type: "geojson", data: NODES_URL, promoteId: "id" },
+      // filled by MapView with the route comparison
+      [ROUTE_SOURCE]: { type: "geojson", data: emptyCollection() },
+      [ROUTE_POINTS_SOURCE]: { type: "geojson", data: emptyCollection() },
     },
-    layers: [...below, glow, edges, ...above, nodes],
+    layers: [...below, glow, edges, ...above, nodes, ...routeLayers(scheme)],
   };
 }

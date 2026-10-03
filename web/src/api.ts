@@ -154,3 +154,49 @@ export const fetchCostSpace = (profile: HeatProfile, relief: Relief, signal?: Ab
     `/api/layout/cost-space?profile=${profile}&trees=${relief.trees}&fountains=${relief.fountains}`,
     signal,
   );
+
+// ---------- route comparison (api/routing.py) ----------
+
+export interface Route {
+  edges: number[];
+  /** [lon, lat] from start to end */
+  coordinates: [number, number][];
+  length_m: number;
+  /** Walking cost with heat for the profile and relief asked for */
+  cost_m: number;
+  minutes: number;
+  shade_share: number;
+  pet_mean_c: number | null;
+}
+
+export interface RoutePoint {
+  node: number;
+  lon: number;
+  lat: number;
+}
+
+export interface RouteComparison {
+  start: RoutePoint;
+  end: RoutePoint;
+  shortest: Route;
+  coolest: Route;
+}
+
+export async function fetchRoute(
+  start: [number, number],
+  end: [number, number],
+  profile: HeatProfile,
+  relief: Relief,
+  signal?: AbortSignal,
+): Promise<RouteComparison> {
+  const url =
+    `/api/route?start=${start.join(",")}&end=${end.join(",")}` +
+    `&profile=${profile}&trees=${relief.trees}&fountains=${relief.fountains}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) {
+    // the API explains what's wrong (too far from the network, same point, ...)
+    const detail = await res.json().then((b) => b.detail).catch(() => null);
+    throw new Error(typeof detail === "string" ? detail : `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<RouteComparison>;
+}
