@@ -4,7 +4,7 @@ from pathlib import Path
 
 import duckdb
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "pedestrian_paths.duckdb"
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "basel.duckdb"
 
 
 def get_connection():
