@@ -69,14 +69,6 @@ export const WalkIcon = () => (
   </svg>
 );
 
-export const InfoIcon = () => (
-  <svg {...base} width={16} height={16}>
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 11v5" />
-    <circle cx="12" cy="7.75" r="0.6" fill="currentColor" />
-  </svg>
-);
-
 // Heat-sensitivity profiles: someone running, walking, and walking with a cane
 
 export const RunIcon = () => (

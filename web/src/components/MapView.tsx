@@ -166,7 +166,7 @@ export function MapView({
     };
   }, []);
 
-  // Restyle on theme / heat profile / colour mode change (MapLibre diffs the styles).
+  // Restyle on theme, heat profile or colour mode change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
   const styleKey = useRef(`${scheme}|${profile}|${mode}`);
   useEffect(() => {

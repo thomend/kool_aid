@@ -39,11 +39,7 @@ class GraphMeta(BaseModel):
     component_count: int
     total_length_km: float
     bounds: Bounds
-    length_quantiles_m: dict[str, float]  # p10..p90, for colour scales
-    # p10..p90 of the default profile's walk cost; one scale for all profiles
-    # so switching profiles visibly changes the colours
-    walk_cost_quantiles_m: dict[str, float]
-    highway_counts: dict[str, int]
+    length_quantiles_m: dict[str, float]  # p10..p90 of edge length
     node_type_counts: dict[str, int]
     walks: int | None  # simulated walks behind the leverage, see scripts/build_leverage.py
 
@@ -189,9 +185,6 @@ class _Store:
         self.nodes_geojson = _dump({"type": "FeatureCollection", "features": node_features})
 
         quantiles = _quantiles([e["length_m"] for e in self.edges.values()])
-        cost_quantiles = _quantiles(
-            [e["walk_cost_m"][DEFAULT_PROFILE] for e in self.edges.values()]
-        )
         lons = [n["lon"] for n in self.nodes.values()]
         lats = [n["lat"] for n in self.nodes.values()]
         self.meta = GraphMeta(
@@ -201,8 +194,6 @@ class _Store:
             total_length_km=round(sum(e["length_m"] for e in self.edges.values()) / 1000, 2),
             bounds=Bounds(west=min(lons), south=min(lats), east=max(lons), north=max(lats)),
             length_quantiles_m=quantiles,
-            walk_cost_quantiles_m=cost_quantiles,
-            highway_counts=_count(e["highway"] for e in self.edges.values()),
             node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
             walks=walks,
         )
@@ -223,7 +214,7 @@ def _load_leverage(con):
 
 
 def _quantiles(values):
-    """p10..p90 for colour scales."""
+    """p10..p90."""
     qs = np.percentile(values, [10, 25, 50, 75, 90])
     return {f"p{p}": round(float(q), 1) for p, q in zip((10, 25, 50, 75, 90), qs)}
 

@@ -1,27 +1,15 @@
 """Estimate where shade would help walkers most: the leverage of each edge, in DuckDB.
 
-A heat map shows where it is hot. This shows where heat is hot *and* hard to avoid on
-everyday walks, which a raster cannot: a hot street with a shaded parallel street scores
-low, a hot link that many walks have to use scores high.
+A heat map shows where it is hot; this shows where heat is hard to avoid on everyday
+walks. From SOURCES random start nodes, every node within MAX_TRIP_M (shortest path) is
+a destination. Each walk is routed the shortest way and, per heat profile, the coolest
+way (by the cost from build_layout.py). An edge's leverage is its heat surcharge
+(cost - length) times the walks whose coolest route still uses it, per walk: the heat
+that shading it would remove. First-order: walks that would switch onto a shaded edge
+are not counted.
 
-Method (offline, a few seconds per hundred start points):
-  1. Simulate walks: from SOURCES random start nodes of the main network, every node within
-     MAX_TRIP_M along the shortest path is a destination (one walk per start-destination pair).
-  2. Route every walk twice per heat-sensitivity profile: shortest (by length) and coolest
-     (by the profile's cost from build_layout.py, i.e. people avoid heat where they can).
-  3. Per edge and profile:
-       trips_shortest  walks whose shortest route uses the edge (where people want to go)
-       trips_coolest   walks whose coolest route still uses the edge (heat they cannot avoid)
-       surcharge_m     cost_m - length_m, the heat surcharge of walking the edge
-       leverage        trips_coolest * surcharge_m / walks: the heat surcharge per simulated
-                       walk that shading the edge (cost back to its length) would remove
-       leverage_pct    percentile rank of leverage among edges with leverage > 0 (0-100)
-     The first-order estimate ignores walks that would switch onto the edge once shaded.
-
-Creates two tables (rerun with --replace after build_layout.py rebuilt edge_cost):
-  edge_leverage  profile, edge_id, trips_shortest, trips_coolest, surcharge_m, leverage,
-                 leverage_pct; main-network edges only
-  leverage_meta  one row: built_at, sources, max_trip_m, walks
+Creates edge_leverage (per profile and main-network edge) and leverage_meta (one row).
+Rerun with --replace after build_layout.py rebuilt edge_cost.
 
 Usage:
     python scripts/build_leverage.py [--db data/basel.duckdb] [--sources 1000] [--replace]

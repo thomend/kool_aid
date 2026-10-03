@@ -2,7 +2,7 @@
 
 import type { HeatProfile } from "./profiles";
 
-export interface Bounds {
+interface Bounds {
   west: number;
   south: number;
   east: number;
@@ -16,14 +16,12 @@ export interface GraphMeta {
   total_length_km: number;
   bounds: Bounds;
   length_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
-  walk_cost_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
-  highway_counts: Record<string, number>;
   node_type_counts: Record<string, number>;
   /** Simulated walks behind the leverage (scripts/build_leverage.py); null if not built. */
   walks: number | null;
 }
 
-export type NodeType = "intersection" | "junction" | "dead_end";
+type NodeType = "intersection" | "junction" | "dead_end";
 
 export interface EdgeSummary {
   id: number;
@@ -91,18 +89,12 @@ export const fetchNode = (id: number, signal?: AbortSignal) =>
 export const fetchEdge = (id: number, signal?: AbortSignal) =>
   getJson<EdgeSummary>(`/api/graph/edges/${id}`, signal);
 
+/** Quality of a cost-space layout (the API sends the whole layout_meta row). */
 export interface LayoutMeta {
   profile: HeatProfile;
-  built_at: string;
-  cost: string;
-  alpha: number;
-  iterations: number;
-  edge_stretch_median: number;
-  edge_stretch_p05: number;
+  edge_stretch_p05: number; // on-screen edge length / cost
   edge_stretch_p95: number;
-  displacement_median_m: number;
-  displacement_p95_m: number;
-  displacement_max_m: number;
+  displacement_max_m: number; // furthest a node moved from its real position
 }
 
 // Flat coordinate lists [x0, y0, x1, y1, …] in metres relative to origin_lv95.

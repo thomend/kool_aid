@@ -14,31 +14,26 @@ import type { HeatProfile } from "../profiles";
 /** What the edge colour shows: walking cost, or where shade would help most. */
 export type ColorMode = "cost" | "leverage";
 
-export interface EdgeCategory {
-  key: string;
+interface EdgeCategory {
   label: string;
   highways: string[];
 }
 
 // Labels for unnamed edges. Order matters: the first category whose highways match wins
-export const EDGE_CATEGORIES: EdgeCategory[] = [
+const EDGE_CATEGORIES: EdgeCategory[] = [
   {
-    key: "steps",
     label: "Steps",
     highways: ["steps"],
   },
   {
-    key: "zone",
     label: "Pedestrian zone",
     highways: ["pedestrian", "living_street"],
   },
   {
-    key: "footpath",
     label: "Footpath",
     highways: ["footway", "path", "track", "cycleway"],
   },
   {
-    key: "street",
     label: "Street",
     highways: [],
   },
