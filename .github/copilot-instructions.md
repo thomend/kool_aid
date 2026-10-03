@@ -10,6 +10,9 @@
   `ALTER TABLE`, `DELETE`, `CREATE OR REPLACE TABLE` over an existing table, etc.)
   without first confirming with a human. Additive inserts into existing, unchanged
   schemas are fine without confirmation.
+- You can check out the db quicky by running python scripts/inspect_db.py
+
+
 
 ## FastAPI app (`api/`)
 - Keep it simple: no high abstraction layers, no service/repository patterns, no
