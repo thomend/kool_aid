@@ -1,20 +1,24 @@
 """Count the trees of the Basel-Stadt tree cadastre near each edge of the walkable graph in DuckDB.
 
 Reads the edges written by build_graph.py and the Baumkataster Basel-Stadt (data.bs.ch dataset
-100052, public trees as points), downloading the CSV to data/baumkataster/ on first use.
+100052, public trees as points). On first use the cadastre is downloaded straight into the
+table trees; later runs reuse that table, so they work offline.
 A tree counts for every edge within BUFFER_M of it, so a tree at a crossing counts for each
 of the edges meeting there. The trees cover public ground only (streets, parks, schools),
 not private gardens.
 
-Creates one table, edge_trees, one row per edge (edge_id = edges.id).
+Creates two tables:
+  trees       one row per tree of the cadastre (lon/lat in WGS84), written once
+  edge_trees  one row per edge (edge_id = edges.id)
 Edge ids change whenever build_graph.py rebuilds the graph, so rerun this script
-afterwards with --replace.
+afterwards with --replace (recomputes edge_trees only; trees is left as is).
 
 Usage:
     python scripts/join_trees_edges.py [--db data/basel.duckdb] [--replace]
 """
 
 import argparse
+import io
 from pathlib import Path
 
 import duckdb
@@ -24,7 +28,6 @@ import requests
 import shapely
 from pyproj import Transformer
 
-TREES_CSV = Path("data/baumkataster/100052.csv")
 TREES_URL = "https://data.bs.ch/api/explore/v2.1/catalog/datasets/100052/exports/csv"
 BUFFER_M = 15.0  # roughly a crown radius plus the sidewalk
 
@@ -36,19 +39,55 @@ def load_edges(con):
     return con.execute("SELECT id, wkt, length_m FROM edges ORDER BY id").fetchall()
 
 
-def load_trees():
-    """Tree locations in LV95 as shapely points, downloading the cadastre if needed."""
-    if not TREES_CSV.exists():
-        print(f"Downloading tree cadastre to {TREES_CSV} ...")
-        resp = requests.get(TREES_URL, timeout=300)
-        resp.raise_for_status()
-        TREES_CSV.parent.mkdir(parents=True, exist_ok=True)
-        TREES_CSV.write_bytes(resp.content)
-    df = pd.read_csv(TREES_CSV, sep=";", usecols=["geo_point_2d"], encoding="utf-8-sig")
+def table_exists(con, name):
+    return con.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [name]
+    ).fetchone()[0] > 0
+
+
+def fetch_trees():
+    """Download the tree cadastre, one row per tree with lon/lat."""
+    print("Downloading tree cadastre from data.bs.ch ...")
+    resp = requests.get(TREES_URL, timeout=300)
+    resp.raise_for_status()
+    df = pd.read_csv(io.BytesIO(resp.content), sep=";", encoding="utf-8-sig")
+    df = df.dropna(subset=["geo_point_2d"])
     # geo_point_2d is "lat, lon"
-    latlon = df["geo_point_2d"].dropna().str.split(",", expand=True).astype(float)
-    x, y = TO_LV95.transform(latlon[1].to_numpy(), latlon[0].to_numpy())
-    return shapely.points(x, y)
+    latlon = df["geo_point_2d"].str.split(",", expand=True).astype(float)
+    return pd.DataFrame({
+        "tree_id": df["ba_baumnr"],
+        "species_latin": df["baumart_lateinisch"],
+        "species_german": df["baumart_deutsch"],
+        "tree_group": df["ba_gruppe"],
+        "street": df["ba_strasse"],
+        "age_years": df["ba_baumalter"].astype("Int64"),
+        "protection": df["ba_schutzstatus"],
+        "lon": latlon[1],
+        "lat": latlon[0],
+    })
+
+
+def write_trees(con, trees_df):
+    con.execute("""
+        CREATE TABLE trees (
+            tree_id VARCHAR PRIMARY KEY,  -- ba_baumnr, e.g. BS039074
+            species_latin VARCHAR,
+            species_german VARCHAR,
+            tree_group VARCHAR,           -- e.g. Strassenbäume, Öffentliche Grünflächen
+            street VARCHAR,
+            age_years INTEGER,
+            protection VARCHAR,           -- ba_schutzstatus
+            lon DOUBLE,                   -- WGS84
+            lat DOUBLE
+        )
+    """)
+    con.execute("INSERT INTO trees BY NAME SELECT * FROM trees_df")
+
+
+def load_trees(con):
+    """Tree locations in LV95 as shapely points."""
+    lon, lat = np.array(con.execute("SELECT lon, lat FROM trees").fetchall()).T
+    return shapely.points(*TO_LV95.transform(lon, lat))
 
 
 def edge_lines(edges):
@@ -74,15 +113,7 @@ def build_table(edges, trees):
     })
 
 
-def write_db(con, table_df, replace):
-    exists = con.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'edge_trees'"
-    ).fetchone()[0]
-    if exists and not replace:
-        raise SystemExit(
-            "Table edge_trees already exists. Rerun with --replace to recompute it "
-            "(needed after build_graph.py rebuilt the edges)."
-        )
+def write_db(con, table_df):
     con.execute("DROP TABLE IF EXISTS edge_trees")
     # No REFERENCES edges (id): it would block the DROP TABLE edges in build_graph.py
     con.execute("""
@@ -102,10 +133,17 @@ def main():
                         help="recompute edge_trees if it already exists")
     args = parser.parse_args()
 
-    trees = load_trees()
     con = duckdb.connect(str(args.db))
+    if table_exists(con, "edge_trees") and not args.replace:
+        raise SystemExit(
+            "Table edge_trees already exists. Rerun with --replace to recompute it "
+            "(needed after build_graph.py rebuilt the edges)."
+        )
+    if not table_exists(con, "trees"):
+        write_trees(con, fetch_trees())
+    trees = load_trees(con)
     table_df = build_table(load_edges(con), trees)
-    write_db(con, table_df, args.replace)
+    write_db(con, table_df)
     con.close()
 
     density = table_df["trees_per_100m"]
