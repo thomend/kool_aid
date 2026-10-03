@@ -12,7 +12,7 @@
       const body = document.querySelector('#streets tbody');
       streets.forEach(s => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${s.name}</td><td>${s.highway_types}</td><td>${s.segment_count}</td>`;
+        row.innerHTML = `<td>${s.name}</td><td>${s.highway}</td><td>${s.segment_count}</td>`;
         body.appendChild(row);
       });
     });
