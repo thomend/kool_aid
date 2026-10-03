@@ -99,11 +99,13 @@ export interface LayoutMeta {
   reference_median: number;
   /** This variant's own median heat factor. */
   heat_factor_median: number;
-  alpha: number;
-  iterations: number;
-  edge_stretch_median: number;
-  edge_stretch_p05: number;
-  edge_stretch_p95: number;
+  /** Target area = (heat ratio) ^ exaggeration. */
+  exaggeration: number;
+  /** Area change of 250 m blocks with network (1 = as on the map). */
+  area_ratio_p01: number;
+  area_ratio_p50: number;
+  area_ratio_p99: number;
+  area_ratio_max: number;
   displacement_median_m: number;
   displacement_p95_m: number;
   displacement_max_m: number;
@@ -142,6 +144,8 @@ export interface CostSpaceData {
     labels: { name: string; kind: string; geo: number[]; cost: number[] }[];
     /** Regular 250 m grid, warped along with the network. */
     grid: { geo: number[]; cost: number[] }[];
+    /** The cells between the grid lines near the network; area_ratio > 1: feels bigger. */
+    cells: { geo: number[]; cost: number[]; area_ratio: number }[];
   };
 }
 

@@ -49,20 +49,26 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
 }
 
 function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
-  const spread = Math.max(1 - layout.edge_stretch_p05, layout.edge_stretch_p95 - 1);
+  const times = (v: number) => `${v < 1 ? v.toFixed(2) : v.toFixed(1)}×`;
   return (
     <>
       <p className="section-label">Cost space</p>
       <p className="small">
-        Every edge is drawn as long as its cost relative to a typical metre without trees and
-        fountains: hotter streets stretch, cooler ones shrink. The grid is warped
-        along with the network, so stretched cells mark heat-stressed areas and squeezed cells
-        cool ones.
+        Basel as it feels on a hot afternoon: every neighbourhood grows by how much harder it is to
+        walk than a typical metre without trees and fountains, and shrinks where it is easier. The
+        grid is warped along with the city and tinted in the colours of the streets, so big red
+        cells are heat-stressed areas and small teal cells cool ones.
+      </p>
+      <p className="small subtle">
+        The effect is exaggerated to make it visible (area grows with the heat cost to the power
+        of {layout.exaggeration}), so compare areas with each other, not with distances.
       </p>
       <dl className="mini-stats">
         <div>
-          <dt>Edge length vs cost</dt>
-          <dd>±{Math.max(1, Math.round(spread * 100))} %</dd>
+          <dt>250 m blocks</dt>
+          <dd>
+            {times(layout.area_ratio_p01)} – {times(layout.area_ratio_p99)}
+          </dd>
         </div>
         <div>
           <dt>Largest shift</dt>

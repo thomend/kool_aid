@@ -1,24 +1,16 @@
-"""Compute the cost-space layout of the walkable graph.
+"""Compute the cost-space layout of the walkable graph: Basel as it feels on a hot afternoon.
 
-Treats the main component as an elastic network: every edge is a spring whose
-rest length is its walking cost relative to the city (cost divided by the
-reference: the length-weighted median heat factor without trees and fountains,
-so without them the city as a whole keeps its size: hotter-than-typical streets
-stretch, cooler ones shrink; with them it shrinks where they help), and every
-node is gently pulled toward its geographic position so the city stays
-recognisable. Minimises
+A density cartogram (cartogram.py, Gastner & Newman's diffusion method) grows
+every area by how much harder it is to walk than a typical metre without trees
+and fountains (the fixed reference), and shrinks it where it is easier:
 
-    sum over edges   w_ij (|p_i - p_j| - c_ij)^2       edge length on screen = cost
-  + alpha * sum over nodes  W_i |p_i - g_i|^2          stay near geography
+    target area = (local heat factor / reference) ^ EXAGGERATION
 
-with w_ij = 1/c_ij^2 and W_i the summed edge weight of node i. Solved by stress
-majorization starting from the geographic positions g, so the layout never
-flips or rotates. Expensive edges push their surroundings apart; cheap ones
-pull them together.
-
-(Shortest-path "pivot" terms that make all pairwise distances match path cost
-were tried too: they inflate the whole city and fling dead ends outward,
-which makes the view unreadable.)
+The local heat factor is the length-weighted mean over the edges nearby (log
+scale, Gaussian blur of SMOOTHING_M), fading to neutral where the network is
+sparse, so rivers and parks keep their size. EXAGGERATION makes the effect
+visible: as walked, areas would change by at most ~1.5x. The warp is smooth and
+never folds; streets, rivers, labels and the background grid all move with it.
 
 One layout is computed per heat-sensitivity profile (cost_model.PROFILES) and
 per relief variant: tree shade and fountains each on or off, so users can
@@ -29,11 +21,13 @@ Writes:
                 for every main-component edge: the ingredients of the cost, from
                 which the frontend computes it for any profile and variant
   cost_model    one row: the constants of the formula (cost_model.py)
+  layout_warp   profile, trees, fountains and the warped lattice (WARP_STEP_M), from
+                which the API moves any point into cost space
   node_layout   profile, trees, fountains, node_id, x, y   (Swiss LV95 metres)
   layout_meta   one row of parameters and quality measures per profile and variant
 
 Usage:
-    python scripts/build_layout.py [--db data/basel.duckdb] [--alpha 0.02]
+    python scripts/build_layout.py [--db data/basel.duckdb] [--exaggeration 6]
 """
 
 import argparse
@@ -43,6 +37,7 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
+from cartogram import Warp, diffuse, gaussian_blur
 from cost_model import (
     FOUNTAIN_EFFECT,
     PET_THRESHOLD_C,
@@ -55,6 +50,14 @@ from cost_model import (
 
 # Relief variants: (tree shade counted, fountains counted)
 VARIANTS = [(False, False), (True, False), (False, True), (True, True)]
+
+EXAGGERATION = 6.0  # target area = ratio ** this; at 6, the hottest blocks grow ~5x
+CELL_M = 50.0  # cartogram grid
+GRID_SIZE = 512  # cells per side (25.6 km), a wide neutral margin around Basel
+SMOOTHING_M = 125.0  # neighbourhood scale of the heat field
+WARP_MARGIN_M = 3000.0  # stored warp reaches this far beyond the network
+WARP_STEP_M = 100.0  # spacing of the stored warp lattice
+BLOCK_M = 250.0  # block size for the area statistics
 
 
 def edge_factor(heat, scale_c, trees, fountains):
@@ -154,54 +157,59 @@ def load_graph(con):
     return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"], heat
 
 
-def unique_edges(src, dst, cost):
-    """Collapse parallel edges to the cheapest one per node pair."""
-    a, b = np.minimum(src, dst), np.maximum(src, dst)
-    order = np.lexsort((cost, b, a))
-    a, b, cost = a[order], b[order], cost[order]
-    first = np.ones(len(a), bool)
-    first[1:] = (a[1:] != a[:-1]) | (b[1:] != b[:-1])
-    return a[first], b[first], cost[first]
+def heat_density(origin, mid_cell, length, ratio, exaggeration):
+    """Cartogram density per grid cell: exaggerated local heat ratio, 1 where sparse."""
+    weight = np.zeros((GRID_SIZE, GRID_SIZE))
+    log_sum = np.zeros((GRID_SIZE, GRID_SIZE))
+    np.add.at(weight, tuple(mid_cell.T), length)
+    np.add.at(log_sum, tuple(mid_cell.T), length * np.log(ratio))
+    weight = gaussian_blur(weight, SMOOTHING_M / CELL_M)
+    log_sum = gaussian_blur(log_sum, SMOOTHING_M / CELL_M)
+    # fade to neutral where the network is sparse (a quarter of the cells near
+    # the network have less weight than this)
+    w0 = np.percentile(weight[weight > weight.max() * 1e-3], 25)
+    log_ratio = log_sum / np.maximum(weight, 1e-9) * (weight / (weight + w0))
+    return np.exp(exaggeration * log_ratio)
 
 
-def majorize(geo, a, b, cost, alpha, max_iterations, tol=1e-3):
-    """Localized stress majorization of the edge springs plus the geographic pull."""
-    n = len(geo)
-    I, J = np.r_[a, b], np.r_[b, a]
-    D = np.r_[cost, cost]
-    W = 1 / np.maximum(D, 1.0) ** 2  # floor at 1 m so tiny edges don't dominate
-    w_sum = np.bincount(I, weights=W, minlength=n)
-    anchor = alpha * w_sum
-    denom = w_sum + anchor
+def stored_warp(origin, moved_cells, bounds):
+    """The cartogram lattice in metres, cropped around the network and thinned."""
+    every = int(WARP_STEP_M / CELL_M)
+    lo = np.floor((bounds[0] - WARP_MARGIN_M - origin) / WARP_STEP_M).astype(int) * every
+    hi = np.ceil((bounds[1] + WARP_MARGIN_M - origin) / WARP_STEP_M).astype(int) * every
+    lo, hi = np.maximum(lo, 0), np.minimum(hi, GRID_SIZE)
+    moved = moved_cells[lo[0]:hi[0] + 1:every, lo[1]:hi[1] + 1:every] * CELL_M + origin
+    x0, y0 = origin + lo * CELL_M
+    return Warp(float(x0), float(y0), WARP_STEP_M, moved)
 
-    pos = geo.copy()
-    for iteration in range(1, max_iterations + 1):
-        delta = pos[I] - pos[J]
-        dist = np.maximum(np.linalg.norm(delta, axis=1), 1e-9)
-        target = pos[J] + (D / dist)[:, None] * delta
-        num = np.column_stack(
-            [np.bincount(I, weights=W * target[:, c], minlength=n) for c in (0, 1)]
-        )
-        new = (num + anchor[:, None] * geo) / denom[:, None]
-        move = np.linalg.norm(new - pos, axis=1).mean()
-        pos = new
-        if move < tol:
-            break
-    return pos, iteration
+
+def block_area_ratios(warp, geo):
+    """Area change of the BLOCK_M blocks that contain at least 5 nodes."""
+    cell = np.floor(geo / BLOCK_M).astype(int)
+    blocks, counts = np.unique(cell, axis=0, return_counts=True)
+    blocks = blocks[counts >= 5] * BLOCK_M
+    steps = np.linspace(0, BLOCK_M, 6)[:-1]
+    ring = np.concatenate([  # block outline, 5 vertices per side
+        np.c_[steps, np.zeros(5)], np.c_[np.full(5, BLOCK_M), steps],
+        np.c_[BLOCK_M - steps, np.full(5, BLOCK_M)], np.c_[np.zeros(5), BLOCK_M - steps],
+    ])
+    moved = warp.apply((blocks[:, None, :] + ring[None]).reshape(-1, 2)).reshape(len(blocks), -1, 2)
+    x, y = moved[..., 0], moved[..., 1]
+    area = 0.5 * np.abs(np.sum(x * np.roll(y, -1, axis=1) - y * np.roll(x, -1, axis=1), axis=1))
+    return area / BLOCK_M**2
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--db", type=Path, default=Path("data/basel.duckdb"))
-    parser.add_argument("--alpha", type=float, default=0.02,
-                        help="pull toward geography (0 = edges only, larger = closer to the map)")
-    parser.add_argument("--max-iterations", type=int, default=3000)
+    parser.add_argument("--exaggeration", type=float, default=EXAGGERATION,
+                        help="target area = (heat ratio) ** this (1 = as walked)")
     args = parser.parse_args()
 
     con = duckdb.connect(str(args.db))
     node_ids, geo, src, dst, length, heat = load_graph(con)
-    # Every main-component edge, including self-loops (dropped from the spring
-    # layout but still walkable and worth colouring/inspecting).
+    # Every main-component edge, including self-loops (not part of the density
+    # but still walkable and worth colouring/inspecting).
     all_edges = con.sql(
         "SELECT id, length_m FROM edges WHERE component = 0 ORDER BY id"
     ).fetchnumpy()
@@ -238,6 +246,16 @@ def main():
         [PET_THRESHOLD_C, SHADE_EFFECT, FOUNTAIN_EFFECT],
     )
     con.execute("""
+        CREATE OR REPLACE TABLE layout_warp (
+            profile VARCHAR, trees BOOLEAN, fountains BOOLEAN,
+            x0 DOUBLE, y0 DOUBLE,  -- LV95 metres of lattice node (0, 0)
+            step_m DOUBLE,
+            nx INTEGER, ny INTEGER,
+            moved DOUBLE[],        -- warped (x, y) of every lattice node, x-major
+            PRIMARY KEY (profile, trees, fountains)
+        )
+    """)
+    con.execute("""
         CREATE OR REPLACE TABLE node_layout (
             profile VARCHAR, trees BOOLEAN, fountains BOOLEAN, node_id BIGINT, x DOUBLE, y DOUBLE,
             PRIMARY KEY (profile, trees, fountains, node_id)
@@ -251,19 +269,24 @@ def main():
             built_at TIMESTAMP,
             cost VARCHAR,                 -- the cost formula
             scale_c DOUBLE,               -- the profile's PET scale
-            reference_median DOUBLE,      -- layout edge length = cost / this (median without relief)
+            reference_median DOUBLE,      -- heat factor 1 in the layout (median without relief)
             heat_factor_median DOUBLE,    -- this variant's own median, for comparison
-            alpha DOUBLE,
-            iterations INTEGER,
-            edge_stretch_median DOUBLE,   -- on-screen edge length / relative cost (1 = exact)
-            edge_stretch_p05 DOUBLE,
-            edge_stretch_p95 DOUBLE,
+            exaggeration DOUBLE,          -- target area = ratio ^ this
+            area_ratio_p01 DOUBLE,        -- area change of 250 m blocks with network
+            area_ratio_p50 DOUBLE,
+            area_ratio_p99 DOUBLE,
+            area_ratio_max DOUBLE,
             displacement_median_m DOUBLE, -- how far nodes moved from geography
             displacement_p95_m DOUBLE,
             displacement_max_m DOUBLE,
             PRIMARY KEY (profile, trees, fountains)
         )
     """)
+
+    # Cartogram grid centred on the network; edges add their length at their midpoint
+    bounds = np.array([geo.min(axis=0), geo.max(axis=0)])
+    origin = bounds.mean(axis=0) - GRID_SIZE * CELL_M / 2
+    mid_cell = np.floor(((geo[src] + geo[dst]) / 2 - origin) / CELL_M).astype(int)
 
     for profile, scale in PROFILES.items():
         # Fixed reference: what a typical metre costs without trees and fountains
@@ -275,21 +298,29 @@ def main():
             median = median_heat_factor(
                 edge_factor(all_heat, scale, trees, fountains), all_edges["length_m"]
             )
-            relative = length * edge_factor(heat, scale, trees, fountains) / reference
-            a, b, cost = unique_edges(src, dst, relative)
-            pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
+            ratio = edge_factor(heat, scale, trees, fountains) / reference
+            density = heat_density(origin, mid_cell, length, ratio, args.exaggeration)
+            warp = stored_warp(origin, diffuse(density), bounds)
+            pos = warp.apply(geo)
 
-            stretch = np.linalg.norm(pos[a] - pos[b], axis=1) / np.maximum(cost, 1e-6)
+            areas = block_area_ratios(warp, geo)
             displacement = np.linalg.norm(pos - geo, axis=1)
             quality = {
-                "edge_stretch_median": float(np.median(stretch)),
-                "edge_stretch_p05": float(np.percentile(stretch, 5)),
-                "edge_stretch_p95": float(np.percentile(stretch, 95)),
+                "area_ratio_p01": float(np.percentile(areas, 1)),
+                "area_ratio_p50": float(np.percentile(areas, 50)),
+                "area_ratio_p99": float(np.percentile(areas, 99)),
+                "area_ratio_max": float(areas.max()),
                 "displacement_median_m": float(np.median(displacement)),
                 "displacement_p95_m": float(np.percentile(displacement, 95)),
                 "displacement_max_m": float(displacement.max()),
             }
 
+            nx, ny = warp.moved.shape[:2]
+            con.execute(
+                "INSERT INTO layout_warp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [profile, trees, fountains, warp.x0, warp.y0, warp.step_m, nx, ny,
+                 warp.moved.ravel().round(2).tolist()],
+            )
             con.execute(
                 """INSERT INTO node_layout
                    SELECT $1, $2, $3, unnest($4) AS node_id, unnest($5) AS x, unnest($6) AS y""",
@@ -308,17 +339,16 @@ def main():
                     scale,
                     reference,
                     median,
-                    args.alpha,
-                    iterations,
+                    args.exaggeration,
                     *quality.values(),
                 ],
             )
             print(
                 f"[{profile}, trees {'on' if trees else 'off'}, fountains {'on' if fountains else 'off'}] "
-                f"median heat factor {median:.2f} (reference {reference:.2f}); "
-                f"{time.time() - started:.1f}s ({iterations} iterations); "
-                f"displacement median {quality['displacement_median_m']:.0f} m, "
-                f"p95 {quality['displacement_p95_m']:.0f} m, max {quality['displacement_max_m']:.0f} m"
+                f"{time.time() - started:.0f}s; 250 m blocks x{quality['area_ratio_p01']:.2f} .. "
+                f"x{quality['area_ratio_p99']:.2f} (median x{quality['area_ratio_p50']:.2f}, "
+                f"max x{quality['area_ratio_max']:.2f}); nodes moved median "
+                f"{quality['displacement_median_m']:.0f} m, max {quality['displacement_max_m']:.0f} m"
             )
     con.close()
 

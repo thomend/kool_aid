@@ -5,7 +5,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
 import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl/core";
-import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
+import { PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { ACCENT, NO_DATA, categoryOf } from "../map/style";
@@ -76,6 +76,8 @@ const PALETTE = {
   },
 } as const;
 
+const CELL_OPACITY = { light: 0.22, dark: 0.28 } as const;
+
 const RIVER_WIDTH_M: Record<string, number> = { Rhein: 190, Wiese: 25, Birs: 30, Birsig: 8 };
 
 function lerp(geo: Float32Array, delta: Float32Array, t: number, out: Float32Array) {
@@ -117,6 +119,7 @@ function prepareData(data: CostSpaceData) {
     rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
     labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
     grid: data.context.grid.map((l) => prepare(l.geo, l.cost)),
+    cells: data.context.cells.map((c) => prepare(c.geo, c.cost)),
   };
 }
 
@@ -136,6 +139,7 @@ function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
     rivers: to.rivers.map((r, i) => mix(from.rivers[i], r)),
     labels: to.labels.map((l, i) => mix(from.labels[i], l)),
     grid: to.grid.map((l, i) => mix(from.grid[i], l)),
+    cells: to.cells.map((c, i) => mix(from.cells[i], c)),
   };
 }
 
@@ -147,7 +151,8 @@ function sameShape(a: Prepared, b: Prepared) {
     a.rivers.length === b.rivers.length &&
     a.labels.length === b.labels.length &&
     a.grid.length === b.grid.length &&
-    a.grid.every((l, i) => l.delta.length === b.grid[i].delta.length)
+    a.grid.every((l, i) => l.delta.length === b.grid[i].delta.length) &&
+    a.cells.length === b.cells.length
   );
 }
 
@@ -302,6 +307,17 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
     return factors.map((f) => color(f));
   }, [factors, model, scheme, profile]);
 
+  // Cells take the street colour of the heat ratio their area stands for
+  // (area = ratio ^ exaggeration), so cells and streets share one legend
+  const cellColors = useMemo(() => {
+    if (!model) return data.context.cells.map(() => hexToRgba(NO_DATA[scheme]));
+    const color = edgeColorFn(model, scheme, profile);
+    const reference = referenceMedian(model, profile);
+    return data.context.cells.map((c) =>
+      color(reference * Math.pow(c.area_ratio, 1 / data.meta.exaggeration)),
+    );
+  }, [data, model, scheme, profile]);
+
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
     const k = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / (18 - NODE_MIN_MAP_ZOOM)));
@@ -317,6 +333,21 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const selectedNode = selection?.kind === "node" ? positionOfNode(selection.id) : null;
 
   const layers = [
+    // Cells tinted by how much bigger (red) or smaller (teal) they feel; they
+    // fade in with the morph, as on the map they mean nothing
+    new SolidPolygonLayer({
+      id: "cells",
+      data: prepared.cells.map((c, i) => ({
+        polygon: lerp(c.geo, c.delta, t, new Float32Array(c.geo.length)),
+        i,
+      })),
+      getPolygon: (d) => d.polygon,
+      positionFormat: "XY",
+      getFillColor: (d) => cellColors[d.i],
+      opacity: CELL_OPACITY[scheme] * t,
+      visible: t > 0.01,
+      updateTriggers: { getFillColor: [cellColors] },
+    }),
     // Regular grid, warped like the network: stretched cells are hotter than
     // typical, squeezed cells cooler
     new PathLayer({
@@ -535,7 +566,8 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
           <div className="tooltip-detail">{hover.detail}</div>
         </div>
       )}
-      <ScaleBar zoom={viewState.zoom} />
+      {/* distances only hold on the unwarped map */}
+      {t < 0.02 && <ScaleBar zoom={viewState.zoom} />}
     </div>
   );
 });
@@ -573,9 +605,9 @@ function ScaleBar({ zoom }: { zoom: number }) {
   const candidates = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   const metres = candidates.find((m) => m * pxPerMetre >= 70) ?? 5000;
   return (
-    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)} of walking at typical heat`}>
+    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)}`}>
       <span className="scale-line" style={{ width: metres * pxPerMetre }} />
-      <span>{formatLength(metres)} at typical heat</span>
+      <span>{formatLength(metres)}</span>
     </div>
   );
 }

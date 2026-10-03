@@ -28,7 +28,6 @@ router = APIRouter(prefix="/api/layout", tags=["layout"])
 
 TO_LV95 = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True)
 DECIMALS = 1  # 0.1 m
-IDW_NEIGHBOURS = 8
 GRID_SPACING_M = 250  # background grid warped along with the network
 GRID_STEP_M = 50  # vertex spacing along grid lines
 GRID_REACH_M = 200  # grid is only drawn this close to the network
@@ -88,6 +87,7 @@ def _build(con, profile, trees, fountains):
               ON l.node_id = n.id AND l.profile = $1 AND l.trees = $2 AND l.fountains = $3
             ORDER BY n.id
         """, params=variant).fetchnumpy()
+        warp = _load_warp(con, variant)
         edges = con.sql("""
             SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
                    e.length_m, h.pet_mean_c, h.heat_excess_sq_mean, h.shade_share,
@@ -107,35 +107,23 @@ def _build(con, profile, trees, fountains):
     geo_xy = np.column_stack([nodes["x"], nodes["y"]])
     cost_xy = np.column_stack([nodes["lx"], nodes["ly"]])
     origin = geo_xy.mean(axis=0).round()
-    index = {node_id: i for i, node_id in enumerate(nodes["id"])}
 
-    # Edges: geographic polyline, and a straight line between the cost-space
-    # node positions with the same number of vertices (placed at the same
-    # fraction of arc length), so the two can be interpolated vertex by vertex.
-    geo_parts, cost_parts, starts = [], [], [0]
-    for wkt, s, t in zip(edges["wkt"], edges["source"], edges["target"]):
+    # Edges: the geographic polyline, and the same polyline moved by the
+    # cartogram warp (same vertices, so the two morph vertex by vertex).
+    geo_parts, starts = [], [0]
+    for wkt in edges["wkt"]:
         lonlat = shapely.get_coordinates(shapely.from_wkt(wkt))
-        x, y = TO_LV95.transform(lonlat[:, 0], lonlat[:, 1])
-        path = np.column_stack([x, y])
-        seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
-        frac = np.concatenate([[0], np.cumsum(seg)]) / max(seg.sum(), 1e-9)
-        p0, p1 = cost_xy[index[s]], cost_xy[index[t]]
-        geo_parts.append(path)
-        if s == t:  # closed ring: keep its shape, move it with its node
-            cost_parts.append(path + (p0 - geo_xy[index[s]]))
-        else:
-            cost_parts.append(p0 + frac[:, None] * (p1 - p0))
-        starts.append(starts[-1] + len(path))
+        geo_parts.append(np.column_stack(TO_LV95.transform(lonlat[:, 0], lonlat[:, 1])))
+        starts.append(starts[-1] + len(geo_parts[-1]))
     geo_paths = np.concatenate(geo_parts)
-    cost_paths = np.concatenate(cost_parts)
+    cost_paths = warp(geo_paths)
 
-    shift = _displacement_field(geo_xy, cost_xy - geo_xy)
     context_lines = []
     for name, wkt in lines:
         lonlat = shapely.get_coordinates(shapely.from_wkt(wkt))
         pts = np.column_stack(TO_LV95.transform(lonlat[:, 0], lonlat[:, 1]))
         context_lines.append(
-            {"name": name, "geo": _flat(pts, origin), "cost": _flat(pts + shift(pts), origin)}
+            {"name": name, "geo": _flat(pts, origin), "cost": _flat(warp(pts), origin)}
         )
     context_labels = []
     for name, kind, lon, lat in labels:
@@ -145,14 +133,24 @@ def _build(con, profile, trees, fountains):
                 "name": name,
                 "kind": kind,
                 "geo": _flat(pt, origin),
-                "cost": _flat(pt + shift(pt), origin),
+                "cost": _flat(warp(pt), origin),
             }
         )
 
+    is_near = _near_network(geo_xy)
     grid = [
-        {"geo": _flat(line, origin), "cost": _flat(line + shift(line), origin)}
-        for line in _grid_lines(geo_xy)
+        {"geo": _flat(line, origin), "cost": _flat(warp(line), origin)}
+        for line in _grid_lines(geo_xy, is_near)
     ]
+    cells = []
+    for ring in _grid_cells(geo_xy, is_near):
+        warped = warp(ring)
+        cells.append({
+            "geo": _flat(ring, origin),
+            "cost": _flat(warped, origin),
+            # > 1: the area feels bigger than on the map, < 1: smaller
+            "area_ratio": round(float(_area(warped) / _area(ring)), 3),
+        })
 
     all_pts = np.vstack([geo_xy, cost_xy]) - origin
     return {
@@ -191,17 +189,13 @@ def _build(con, profile, trees, fountains):
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
         },
-        "context": {"lines": context_lines, "labels": context_labels, "grid": grid},
+        "context": {"lines": context_lines, "labels": context_labels, "grid": grid, "cells": cells},
     }
 
 
-def _grid_lines(nodes_xy):
-    """A regular grid over the network, as polylines cut where they leave it.
-
-    Lines run on GRID_SPACING_M multiples (LV95), with a vertex every
-    GRID_STEP_M so they can bend when displaced into cost space.
-    """
-    # cells of GRID_STEP_M with a node, grown by GRID_REACH_M: "near the network"
+def _near_network(nodes_xy):
+    """A test for points within about GRID_REACH_M of a node."""
+    # cells of GRID_STEP_M with a node, grown by GRID_REACH_M
     cell = np.floor(nodes_xy / GRID_STEP_M).astype(int)
     reach = GRID_REACH_M // GRID_STEP_M
     c0 = cell.min(axis=0) - reach
@@ -220,6 +214,15 @@ def _grid_lines(nodes_xy):
         out[inside] = near_mask[tuple(c[inside].T)]
         return out
 
+    return is_near
+
+
+def _grid_lines(nodes_xy, is_near):
+    """A regular grid over the network, as polylines cut where they leave it.
+
+    Lines run on GRID_SPACING_M multiples (LV95), with a vertex every
+    GRID_STEP_M so they can bend when displaced into cost space.
+    """
     lo = np.floor(nodes_xy.min(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
     hi = np.ceil(nodes_xy.max(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
     lines = []
@@ -237,6 +240,37 @@ def _grid_lines(nodes_xy):
     return lines
 
 
+def _grid_cells(nodes_xy, is_near):
+    """The cells between the grid lines whose centre is near the network, as rings.
+
+    Each side has a vertex every GRID_STEP_M (no repeated closing vertex), so
+    the cell bends with the warp like the grid lines around it.
+    """
+    steps = np.arange(0, GRID_SPACING_M, GRID_STEP_M)
+    side = len(steps)
+    unit = np.concatenate([
+        np.c_[steps, np.zeros(side)],
+        np.c_[np.full(side, GRID_SPACING_M), steps],
+        np.c_[GRID_SPACING_M - steps, np.full(side, GRID_SPACING_M)],
+        np.c_[np.zeros(side), GRID_SPACING_M - steps],
+    ])
+    lo = np.floor(nodes_xy.min(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
+    hi = np.ceil(nodes_xy.max(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
+    corners = np.array([
+        (x, y)
+        for x in np.arange(lo[0], hi[0], GRID_SPACING_M)
+        for y in np.arange(lo[1], hi[1], GRID_SPACING_M)
+    ])
+    corners = corners[is_near(corners + GRID_SPACING_M / 2)]
+    return [unit + corner for corner in corners]
+
+
+def _area(ring):
+    """Shoelace area of a ring (no repeated closing vertex)."""
+    x, y = ring[:, 0], ring[:, 1]
+    return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+
 def _nullable_floats(column):
     """Round a column of possibly-NULL doubles, keeping NULL/NaN as None."""
     return [
@@ -245,20 +279,31 @@ def _nullable_floats(column):
     ]
 
 
-def _displacement_field(points, offsets):
-    """Inverse-distance-weighted interpolation of node displacements."""
+def _load_warp(con, variant):
+    """The cartogram warp of a variant (layout_warp), as a function of LV95 points.
 
-    def shift(query):
-        out = np.empty_like(query)
-        for i in range(0, len(query), 256):
-            q = query[i : i + 256]
-            d2 = ((q[:, None, :] - points[None, :, :]) ** 2).sum(axis=2)
-            nearest = np.argpartition(d2, IDW_NEIGHBOURS, axis=1)[:, :IDW_NEIGHBOURS]
-            w = 1 / (np.take_along_axis(d2, nearest, axis=1) + 1.0)
-            out[i : i + 256] = (w[:, :, None] * offsets[nearest]).sum(1) / w.sum(1)[:, None]
-        return out
+    Bilinear interpolation of the warped lattice, as cartogram.Warp.apply in
+    scripts/ (the API doesn't import the pipeline).
+    """
+    x0, y0, step, nx, ny, moved = con.sql("""
+        SELECT x0, y0, step_m, nx, ny, moved FROM layout_warp
+        WHERE profile = $1 AND trees = $2 AND fountains = $3
+    """, params=variant).fetchone()
+    lattice = np.asarray(moved, dtype=float).reshape(nx, ny, 2)
 
-    return shift
+    def warp(points):
+        gx = np.clip((points[:, 0] - x0) / step, 0, nx - 1.000001)
+        gy = np.clip((points[:, 1] - y0) / step, 0, ny - 1.000001)
+        i, j = gx.astype(int), gy.astype(int)
+        fx, fy = (gx - i)[:, None], (gy - j)[:, None]
+        return (
+            lattice[i, j] * (1 - fx) * (1 - fy)
+            + lattice[i + 1, j] * fx * (1 - fy)
+            + lattice[i, j + 1] * (1 - fx) * fy
+            + lattice[i + 1, j + 1] * fx * fy
+        )
+
+    return warp
 
 
 def _flat(points, origin):
