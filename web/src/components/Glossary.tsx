@@ -3,33 +3,27 @@ import type { GraphMeta, LayoutMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { costStops } from "../map/style";
 import { formatCount, formatLength } from "../format";
+import { PET_THRESHOLD_C, PROFILES, heatFactor, type HeatProfile } from "../profiles";
 import { CloseIcon } from "./Icons";
 
 interface Props {
   meta: GraphMeta;
   scheme: Scheme;
+  profile: HeatProfile;
   /** Cost-space layout statistics, once the cost space has been loaded. */
   layout: LayoutMeta | null;
   onClose: () => void;
 }
 
-// Mirror of edge_cost() in scripts/build_layout.py
-const PET_COMFORT_C = 23;
-const PET_SCALE_C = 18;
-const heatFactor = (pet: number) => 1 + Math.max(pet - PET_COMFORT_C, 0) / PET_SCALE_C;
-
-// Heat-stress levels of the PET scale (VDI 3787 sheet 2), as [from, to) in degrees C
-const PET_LEVELS: [number | null, number | null, string][] = [
-  [null, 23, "None"],
-  [23, 29, "Slight"],
-  [29, 35, "Moderate"],
-  [35, 41, "Strong"],
-  [41, null, "Extreme"],
+// Where the heat-stress levels of the PET scale (VDI 3787 sheet 2) begin
+const PET_LEVELS: [number, string][] = [
+  [PET_THRESHOLD_C, "Moderate"],
+  [35, "Strong"],
+  [41, "Extreme"],
+  [45, "Extreme"],
 ];
 
-const cost100 = (pet: number) => Math.round(100 * heatFactor(pet));
-
-export function Glossary({ meta, scheme, layout, onClose }: Props) {
+export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -103,39 +97,54 @@ export function Glossary({ meta, scheme, layout, onClose }: Props) {
           <h3>Cost</h3>
           <p>
             The cost of an edge is how much it takes to walk it, expressed in metres: its length,
-            stretched by heat stress. A shaded, comfortable stretch costs exactly its length; a hot,
-            exposed one costs up to about twice as much.
+            stretched by heat stress. Up to {PET_THRESHOLD_C} °C PET, where moderate heat stress
+            begins, a metre costs one metre. Above that the cost grows with the square of the
+            excess, so the hottest stretches get disproportionately expensive.
           </p>
           <p className="formula mono">
-            cost = length × (1 + max(PET − {PET_COMFORT_C} °C, 0) / {PET_SCALE_C} °C)
+            cost = length × (1 + (max(PET − {PET_THRESHOLD_C} °C, 0) / scale)²)
           </p>
-          <table className="glossary-table">
-            <thead>
-              <tr>
-                <th>PET</th>
-                <th>Heat stress</th>
-                <th>100 m cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PET_LEVELS.map(([from, to, label]) => (
-                <tr key={label}>
-                  <td>
-                    {from === null ? `up to ${to}` : to === null ? `over ${from}` : `${from}–${to}`} °C
-                  </td>
-                  <td>{label}</td>
-                  <td>
-                    {from === null
-                      ? "100"
-                      : to === null
-                        ? `over ${cost100(from)}`
-                        : `${cost100(from)}–${cost100(to)}`}{" "}
-                    m
-                  </td>
+          <p>
+            <strong>Heat sensitivity</strong> sets the scale: how many degrees above{" "}
+            {PET_THRESHOLD_C} °C double the cost of a metre.{" "}
+            {PROFILES.map((p, i) => (
+              <span key={p.key}>
+                {i > 0 && (i === PROFILES.length - 1 ? " and " : ", ")}
+                <em>{p.label.toLowerCase()}</em> {p.scaleC} °C
+              </span>
+            ))}
+            . Low suits fit adults on short trips, high elderly people, small children or anyone
+            with a heart condition.
+          </p>
+          <div className="table-scroll">
+            <table className="glossary-table">
+              <thead>
+                <tr>
+                  <th>PET</th>
+                  <th>Heat stress</th>
+                  {PROFILES.map((p) => (
+                    <th key={p.key} className={p.key === profile ? "current" : undefined}>
+                      {p.label}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {PET_LEVELS.map(([pet, label]) => (
+                  <tr key={pet}>
+                    <td>{pet} °C</td>
+                    <td>{label}</td>
+                    {PROFILES.map((p) => (
+                      <td key={p.key} className={p.key === profile ? "current" : undefined}>
+                        {Math.round(100 * heatFactor(p.key, pet))} m
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="subtle small">Cost of walking 100 m at that PET, per heat sensitivity.</p>
           <dl className="terms">
             <dt>PET</dt>
             <dd>
@@ -145,8 +154,9 @@ export function Glossary({ meta, scheme, layout, onClose }: Props) {
             <dt>Where the heat comes from</dt>
             <dd>
               Stadtklimaanalyse Basel-Stadt (GEO-NET, 2019): a climate model of a hot, cloudless
-              summer day at 14:00, on a 10 m grid at 2 m above ground. Each edge gets the mean PET
-              along its whole length. Edges outside the model area cost their plain length.
+              summer day at 14:00, on a 10 m grid at 2 m above ground. The heat factor is averaged
+              over points every metre along an edge, so a half-sunny edge keeps the cost of its
+              sunny half. Edges outside the model area take the heat of their neighbours.
             </dd>
           </dl>
           <CostLegend meta={meta} scheme={scheme} />

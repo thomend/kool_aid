@@ -9,6 +9,7 @@ import type {
 } from "@maplibre/maplibre-gl-style-spec";
 import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
+import type { HeatProfile } from "../profiles";
 
 export interface EdgeCategory {
   key: string;
@@ -65,11 +66,11 @@ export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(meta: GraphMeta, scheme: Scheme): ExpressionSpecification {
+function edgeColor(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): ExpressionSpecification {
   return [
     "interpolate",
     ["linear"],
-    ["get", "walk_cost_m"],
+    ["get", `walk_cost_m_${profile}`],
     ...costStops(meta, scheme).flat(),
   ] as ExpressionSpecification;
 }
@@ -96,7 +97,7 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
+function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -116,7 +117,7 @@ function graphLayers(meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -154,9 +155,9 @@ function graphLayers(meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
   ];
 }
 
-export function buildStyle(scheme: Scheme, meta: GraphMeta): StyleSpecification {
+export function buildStyle(scheme: Scheme, meta: GraphMeta, profile: HeatProfile): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(meta, scheme);
+  const [glow, edges, nodes] = graphLayers(meta, scheme, profile);
   return {
     version: 8,
     glyphs: GLYPHS,

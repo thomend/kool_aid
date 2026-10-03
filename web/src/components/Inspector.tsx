@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
 import { categoryOf } from "../map/style";
 import { formatHighway, formatLength, formatPet } from "../format";
+import type { HeatProfile } from "../profiles";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
 
 interface Props {
   selection: NonNullable<Selection>;
+  profile: HeatProfile;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -16,7 +18,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, profile, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -52,7 +54,7 @@ export function Inspector({ selection, onSelect, onNodeLoaded }: Props) {
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} onSelect={onSelect} />
+        <EdgeCard edge={current.data} profile={profile} onSelect={onSelect} />
       ) : (
         <NodeCard node={current.data} onSelect={onSelect} />
       )}
@@ -64,7 +66,15 @@ function Chip({ highway }: { highway: string }) {
   return <span className="chip muted">{formatHighway(highway)}</span>;
 }
 
-function EdgeCard({ edge, onSelect }: { edge: EdgeSummary; onSelect: Props["onSelect"] }) {
+function EdgeCard({
+  edge,
+  profile,
+  onSelect,
+}: {
+  edge: EdgeSummary;
+  profile: HeatProfile;
+  onSelect: Props["onSelect"];
+}) {
   return (
     <>
       <p className="eyebrow">Edge</p>
@@ -74,7 +84,7 @@ function EdgeCard({ edge, onSelect }: { edge: EdgeSummary; onSelect: Props["onSe
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
-        {formatLength(edge.walk_cost_m)}
+        {formatLength(edge.walk_cost_m[profile])}
         <span>cost</span>
       </div>
       <p className="subtle small">

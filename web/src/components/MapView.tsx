@@ -12,6 +12,7 @@ import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { buildStyle, categoryOf } from "../map/style";
 import { formatLength } from "../format";
+import type { HeatProfile } from "../profiles";
 
 setWorkerUrl(workerUrl);
 
@@ -20,6 +21,7 @@ export type Selection = { kind: "node" | "edge"; id: number } | null;
 interface Props {
   meta: GraphMeta;
   scheme: Scheme;
+  profile: HeatProfile;
   selection: Selection;
   onSelect: (s: Selection) => void;
   onMap: (map: MapLibreMap) => void;
@@ -43,13 +45,13 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
-export function MapView({ meta, scheme, selection, onSelect, onMap, onGraphLoaded }: Props) {
+export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onGraphLoaded }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded });
-  handlers.current = { onSelect, onGraphLoaded };
+  const handlers = useRef({ onSelect, onGraphLoaded, profile });
+  handlers.current = { onSelect, onGraphLoaded, profile };
 
   // Create the map once
   useEffect(() => {
@@ -57,7 +59,7 @@ export function MapView({ meta, scheme, selection, onSelect, onMap, onGraphLoade
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, meta),
+      style: buildStyle(scheme, meta, profile),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -115,7 +117,11 @@ export function MapView({ meta, scheme, selection, onSelect, onMap, onGraphLoade
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`,
+              detail: [
+                `${formatLength(p[`walk_cost_m_${handlers.current.profile}`])} cost`,
+                formatLength(p.length_m),
+                p.highway.replace("_", " "),
+              ].join(" · "),
             }
           : {
               x: e.point.x,
@@ -146,14 +152,15 @@ export function MapView({ meta, scheme, selection, onSelect, onMap, onGraphLoade
     };
   }, []);
 
-  // Restyle on theme change (MapLibre diffs the styles).
+  // Restyle on theme / heat profile change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const styleKey = useRef(scheme);
+  const styleKey = useRef(`${scheme}|${profile}`);
   useEffect(() => {
-    if (scheme === styleKey.current) return;
-    styleKey.current = scheme;
-    mapRef.current?.setStyle(buildStyle(scheme, meta));
-  }, [scheme, meta]);
+    const key = `${scheme}|${profile}`;
+    if (key === styleKey.current) return;
+    styleKey.current = key;
+    mapRef.current?.setStyle(buildStyle(scheme, meta, profile));
+  }, [scheme, profile, meta]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

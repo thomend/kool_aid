@@ -1,5 +1,7 @@
 // Typed client for the FastAPI backend (api/graph.py).
 
+import type { HeatProfile } from "./profiles";
+
 export interface Bounds {
   west: number;
   south: number;
@@ -33,8 +35,8 @@ export interface EdgeSummary {
   component: number;
   /** PET (physiological equivalent temperature) at 14:00, degrees C; null outside raster coverage. */
   pet_mean_c: number | null;
-  /** Walking cost in metres: length_m inflated for heat stress, see scripts/build_layout.py. */
-  walk_cost_m: number;
+  /** Walking cost in metres per heat profile: length_m inflated for heat stress, see scripts/cost_model.py. */
+  walk_cost_m: Record<HeatProfile, number>;
 }
 
 export interface NodeDetail {
@@ -66,6 +68,7 @@ export const fetchEdge = (id: number, signal?: AbortSignal) =>
   getJson<EdgeSummary>(`/api/graph/edges/${id}`, signal);
 
 export interface LayoutMeta {
+  profile: HeatProfile;
   built_at: string;
   cost: string;
   alpha: number;
@@ -110,5 +113,5 @@ export interface CostSpaceData {
   };
 }
 
-export const fetchCostSpace = (signal?: AbortSignal) =>
-  getJson<CostSpaceData>("/api/layout/cost-space", signal);
+export const fetchCostSpace = (profile: HeatProfile, signal?: AbortSignal) =>
+  getJson<CostSpaceData>(`/api/layout/cost-space?profile=${profile}`, signal);
