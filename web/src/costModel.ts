@@ -1,7 +1,7 @@
 // The walking-cost formula of scripts/cost_model.py, evaluated in the browser so
-// heat profile and relief (tree shade, fountains) can be switched instantly.
-// The constants come from the API (GraphMeta.cost_model); keep the formula in
-// sync with cost_model.py and with heatFactorExpression in map/style.ts.
+// heat profile and relief (tree shade, fountains) switch instantly. Constants
+// come from the API (GraphMeta.cost_model); the formula also lives in
+// heatFactorExpression (map/style.ts) and api/routing.py.
 
 import type { CostModel } from "./api";
 import type { HeatProfile } from "./profiles";
@@ -13,6 +13,7 @@ export interface Relief {
 }
 
 export const FULL_RELIEF: Relief = { trees: true, fountains: true };
+export const NO_RELIEF: Relief = { trees: false, fountains: false };
 
 export const reliefKey = (r: Relief) => `${r.trees ? "trees" : "-"}|${r.fountains ? "fountains" : "-"}`;
 

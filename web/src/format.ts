@@ -13,7 +13,7 @@ export function formatPet(c: number | null): string | null {
   return c === null ? null : `${Math.round(c)}°C PET`;
 }
 
-/** Heat cost per metre relative to the city median, e.g. "+25 % vs. typical". */
+/** Heat cost per metre relative to the reference, e.g. "+25 % heat vs. typical". */
 export function formatHeatRatio(factor: number, median: number): string {
   const pct = Math.round((factor / median - 1) * 100);
   if (Math.abs(pct) < 3) return "typical heat";
