@@ -51,7 +51,10 @@ python scripts/fetch_paths.py     # download walkable ways from OSM       -> tab
 python scripts/fetch_context.py   # download rivers + district names      -> context_lines, context_labels
 python scripts/build_graph.py     # cut ways into nodes and edges         -> nodes, edges, node_paths
 python scripts/build_layout.py    # compute the cost-space layout (~1 s)  -> node_layout, layout_meta
+python scripts/join_trees_edges.py  # Basel-Stadt tree cadastre + trees near each edge -> trees, edge_trees
 ```
+
+`join_trees_edges.py` downloads the tree cadastre (data.bs.ch, dataset 100052) into the table `trees` on its first run and counts the trees within 15 m of each edge into `edge_trees`. Edge ids change with every `build_graph.py` run, so rerun it afterwards with `--replace`.
 
 The two `fetch_` scripts need internet access (Overpass API, which is sometimes slow; the scripts fall back to mirror servers). The two `build_` scripts run offline.
 
