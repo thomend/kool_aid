@@ -1,0 +1,19 @@
+<h1>Mock FastAPI App</h1>
+<p>Visit <a href='/docs'>/docs</a> UI.</p>
+<h2>Pedestrian streets (from DuckDB)</h2>
+<table id="streets" border="1" cellpadding="4">
+  <thead><tr><th>Name</th><th>Highway types</th><th>Segments</th></tr></thead>
+  <tbody></tbody>
+</table>
+<script>
+  fetch('/api/streets?limit=20')
+    .then(r => r.json())
+    .then(streets => {
+      const body = document.querySelector('#streets tbody');
+      streets.forEach(s => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${s.name}</td><td>${s.highway_types}</td><td>${s.segment_count}</td>`;
+        body.appendChild(row);
+      });
+    });
+</script>
