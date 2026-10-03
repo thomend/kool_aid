@@ -3,7 +3,7 @@
 Prints every table's schema, row count, and a couple of sample rows.
 
 Usage:
-    python scripts/inspect_db.py [--db data/pedestrian_paths.duckdb]
+    python scripts/inspect_db.py [--db data/basel.duckdb]
 """
 
 import argparse
@@ -14,7 +14,7 @@ import duckdb
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--db", type=Path, default=Path("data/pedestrian_paths.duckdb"))
+    parser.add_argument("--db", type=Path, default=Path("data/basel.duckdb"))
     args = parser.parse_args()
 
     con = duckdb.connect(str(args.db), read_only=True)

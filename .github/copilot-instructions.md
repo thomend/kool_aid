@@ -3,8 +3,8 @@
 ## Data pipeline
 - Every new dataset gets its own script under `scripts/` showing exactly how it was
   downloaded/fetched and loaded into DuckDB (see `scripts/fetch_pedestrian_paths.py`
-  as the reference pattern: fetch -> transform -> write to `data/pedestrian_paths.duckdb`).
-- New data is always added to DuckDB (`data/pedestrian_paths.duckdb`), not left as
+  as the reference pattern: fetch -> transform -> write to `data/basel.duckdb`).
+- New data is always added to DuckDB (`data/basel.duckdb`), not left as
   loose files, in-memory objects, or committed as raw downloads.
 - Never perform schema changes or destructive operations (`DROP TABLE`,
   `ALTER TABLE`, `DELETE`, `CREATE OR REPLACE TABLE` over an existing table, etc.)
