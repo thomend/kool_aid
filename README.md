@@ -103,4 +103,3 @@ The `fetch_` scripts and the first run of the tree and fountain scripts need int
 - **"Permission denied" or a lock on `basel.duckdb`**: the repo sits on a Windows drive, and a database viewer open on Windows (DBeaver, the DuckDB UI…) locks the file; so does a running pipeline script. Close it and retry, and restart `fastapi dev` if it stopped during a rebuild.
 - **The basemap** needs internet access; without it the network still shows, on a blank background.
 - **Python dependencies**: edit `requirements.in`, then `uv pip compile requirements.in -o requirements.txt && uv pip sync requirements.txt --system`.
-- **Roadmap and ideas**: [web/PLAN.md](web/PLAN.md).
