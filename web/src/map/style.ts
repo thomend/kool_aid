@@ -9,14 +9,12 @@ import type {
 } from "@maplibre/maplibre-gl-style-spec";
 import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
-
-export type ColorMode = "cost" | "type";
+import type { HeatProfile } from "../profiles";
 
 export interface EdgeCategory {
   key: string;
   label: string;
   highways: string[];
-  color: Record<Scheme, string>;
 }
 
 // Order matters: the first category whose highways match wins
@@ -25,25 +23,21 @@ export const EDGE_CATEGORIES: EdgeCategory[] = [
     key: "steps",
     label: "Steps",
     highways: ["steps"],
-    color: { light: "#ff2d55", dark: "#ff375f" },
   },
   {
     key: "zone",
     label: "Pedestrian zone",
     highways: ["pedestrian", "living_street"],
-    color: { light: "#ff9500", dark: "#ff9f0a" },
   },
   {
     key: "footpath",
     label: "Footpath",
     highways: ["footway", "path", "track", "cycleway"],
-    color: { light: "#007aff", dark: "#0a84ff" },
   },
   {
     key: "street",
     label: "Street",
     highways: [],
-    color: { light: "#a1a1a8", dark: "#6c6c72" },
   },
 ];
 
@@ -72,21 +66,13 @@ export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(mode: ColorMode, meta: GraphMeta, scheme: Scheme): ExpressionSpecification {
-  if (mode === "cost") {
-    return [
-      "interpolate",
-      ["linear"],
-      ["get", "walk_cost_m"],
-      ...costStops(meta, scheme).flat(),
-    ] as ExpressionSpecification;
-  }
-  const match: unknown[] = ["match", ["get", "highway"]];
-  for (const c of EDGE_CATEGORIES) {
-    if (c.highways.length) match.push(c.highways, c.color[scheme]);
-  }
-  match.push(EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1].color[scheme]);
-  return match as ExpressionSpecification;
+function edgeColor(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): ExpressionSpecification {
+  return [
+    "interpolate",
+    ["linear"],
+    ["get", `walk_cost_m_${profile}`],
+    ...costStops(meta, scheme).flat(),
+  ] as ExpressionSpecification;
 }
 
 const isPedestrian: ExpressionSpecification = ["==", ["get", "is_pedestrian"], true];
@@ -111,7 +97,7 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
+function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -131,7 +117,7 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(mode, meta, scheme)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -169,9 +155,9 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
   ];
 }
 
-export function buildStyle(scheme: Scheme, mode: ColorMode, meta: GraphMeta): StyleSpecification {
+export function buildStyle(scheme: Scheme, meta: GraphMeta, profile: HeatProfile): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(mode, meta, scheme);
+  const [glow, edges, nodes] = graphLayers(meta, scheme, profile);
   return {
     version: 8,
     glyphs: GLYPHS,

@@ -5,6 +5,8 @@ to a common origin (Swiss LV95), so the frontend can morph between the two.
 Data is columnar (flat coordinate lists) to keep the payload small and to
 load straight into GPU buffers.
 
+There is one layout per heat-sensitivity profile (see scripts/cost_model.py).
+
 Built by scripts/build_layout.py (node_layout, layout_meta) and
 scripts/fetch_context.py (context_lines, context_labels).
 """
@@ -17,7 +19,7 @@ import shapely
 from fastapi import APIRouter, HTTPException, Response
 from pyproj import Transformer
 
-from .graph import DB_PATH
+from .graph import DB_PATH, DEFAULT_PROFILE, PROFILES
 
 router = APIRouter(prefix="/api/layout", tags=["layout"])
 
@@ -27,35 +29,40 @@ IDW_NEIGHBOURS = 8
 
 
 class _Store:
-    payload: bytes | None = None
+    payloads: dict[str, bytes] = {}
     error: str | None = None
 
     def load(self):
         try:
-            self.payload = _dump(_build(duckdb.connect(str(DB_PATH), read_only=True)))
+            self.payloads = {
+                p: _dump(_build(duckdb.connect(str(DB_PATH), read_only=True), p))
+                for p in PROFILES
+            }
             self.error = None
-        except duckdb.CatalogException as e:
-            self.payload = None
-            self.error = f"Layout tables missing, run scripts/build_layout.py ({e})"
+        except (duckdb.CatalogException, duckdb.BinderException, IndexError) as e:
+            self.payloads = {}
+            self.error = f"Layout tables missing or outdated, run scripts/build_layout.py ({e})"
 
 
-def _build(con):
+def _build(con, profile):
     try:
-        meta = con.sql("SELECT * FROM layout_meta").fetchdf().iloc[0].to_dict()
+        meta = con.sql(
+            "SELECT * FROM layout_meta WHERE profile = $1", params=[profile]
+        ).fetchdf().iloc[0].to_dict()
         nodes = con.sql("""
             SELECT n.id, n.node_type, n.degree, n.x, n.y, l.x AS lx, l.y AS ly
-            FROM nodes n JOIN node_layout l ON l.node_id = n.id
+            FROM nodes n JOIN node_layout l ON l.node_id = n.id AND l.profile = $1
             ORDER BY n.id
-        """).fetchnumpy()
+        """, params=[profile]).fetchnumpy()
         try:
             edges = con.sql("""
                 SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
                        e.length_m, ec.pet_mean_c, COALESCE(ec.cost_m, e.length_m) AS walk_cost_m,
                        e.wkt
-                FROM edges e LEFT JOIN edge_cost ec ON ec.edge_id = e.id
+                FROM edges e LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
                 WHERE e.component = 0
                 ORDER BY e.id
-            """).fetchnumpy()
+            """, params=[profile]).fetchnumpy()
         except duckdb.CatalogException:
             # edge_cost not built yet (older build_layout.py run): fall back to length.
             edges = con.sql("""
@@ -190,22 +197,26 @@ store = _Store()
 
 
 @router.get("/cost-space", response_description="Columnar geo + cost-space coordinates")
-def get_cost_space():
+def get_cost_space(profile: str = DEFAULT_PROFILE):
     """Node and edge positions in geographic and cost space, plus context landmarks.
+
+    `profile` picks the heat-sensitivity profile the cost space is built for.
 
     Coordinates are flat [x0, y0, x1, y1, ...] lists in metres relative to
     `origin_lv95`. Edge paths are concatenated; `start_indices` gives the first
     vertex of each edge. Geo and cost paths have identical vertex counts.
     """
-    if store.payload is None:
+    if profile not in PROFILES:
+        raise HTTPException(422, f"profile must be one of {', '.join(PROFILES)}")
+    if not store.payloads:
         raise HTTPException(503, store.error or "Layout not loaded")
-    return Response(store.payload, media_type="application/json")
+    return Response(store.payloads[profile], media_type="application/json")
 
 
 @router.post("/reload")
 def reload():
     """Re-read the layout, e.g. after running build_layout.py."""
     store.load()
-    if store.payload is None:
+    if not store.payloads:
         raise HTTPException(503, store.error)
     return {"ok": True}

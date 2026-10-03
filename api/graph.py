@@ -11,12 +11,17 @@ import os
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import shapely
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 DB_PATH = Path(os.environ.get("KOOL_DB", Path(__file__).parents[1] / "data" / "basel.duckdb"))
 COORD_DECIMALS = 6  # ~0.1 m
+
+# Heat-sensitivity profiles, see scripts/cost_model.py
+PROFILES = ("low", "medium", "high")
+DEFAULT_PROFILE = "medium"
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -35,7 +40,9 @@ class GraphMeta(BaseModel):
     total_length_km: float
     bounds: Bounds
     length_quantiles_m: dict[str, float]  # p10..p90, for colour scales
-    walk_cost_quantiles_m: dict[str, float]  # p10..p90 of walk_cost_m, for colour scales
+    # p10..p90 of the default profile's walk cost; one scale for all profiles
+    # so switching profiles visibly changes the colours
+    walk_cost_quantiles_m: dict[str, float]
     highway_counts: dict[str, int]
     node_type_counts: dict[str, int]
 
@@ -51,7 +58,8 @@ class EdgeSummary(BaseModel):
     length_m: float
     component: int
     pet_mean_c: float | None  # PET at 14:00 today, length-weighted mean, degrees C
-    walk_cost_m: float  # length_m inflated for heat stress; see scripts/build_layout.py
+    # length_m inflated for heat stress, per profile; see scripts/cost_model.py
+    walk_cost_m: dict[str, float]
 
 
 class NodeDetail(BaseModel):
@@ -76,32 +84,24 @@ class _Store:
             ).fetchall()
             edges = con.sql("""
                 SELECT e.id, e.source, e.target, e.way_osm_id, e.street_name, e.highway,
-                       e.is_pedestrian, e.length_m, e.component,
-                       ec.pet_mean_c, COALESCE(ec.cost_m, e.length_m) AS walk_cost_m, e.wkt
+                       e.is_pedestrian, e.length_m, e.component, ec.pet_mean_c, e.wkt
                 FROM edges e
-                LEFT JOIN edge_cost ec ON ec.edge_id = e.id
-            """).fetchall()
-            quantiles = con.sql("""
-                SELECT quantile_cont(length_m, [0.1, 0.25, 0.5, 0.75, 0.9]) FROM edges
-            """).fetchone()[0]
-            cost_quantiles = con.sql("""
-                SELECT quantile_cont(COALESCE(ec.cost_m, e.length_m), [0.1, 0.25, 0.5, 0.75, 0.9])
-                FROM edges e LEFT JOIN edge_cost ec ON ec.edge_id = e.id
-            """).fetchone()[0]
+                LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
+            """, params=[DEFAULT_PROFILE]).fetchall()
+            costs = con.sql("SELECT profile, edge_id, cost_m FROM edge_cost").fetchall()
         except duckdb.CatalogException:
             # edge_cost not built yet (run scripts/build_layout.py): fall back to length.
             edges = con.sql("""
                 SELECT id, source, target, way_osm_id, street_name, highway,
-                       is_pedestrian, length_m, component,
-                       NULL AS pet_mean_c, length_m AS walk_cost_m, wkt
+                       is_pedestrian, length_m, component, NULL AS pet_mean_c, wkt
                 FROM edges
             """).fetchall()
-            quantiles = cost_quantiles = con.sql("""
-                SELECT quantile_cont(length_m, [0.1, 0.25, 0.5, 0.75, 0.9]) FROM edges
-            """).fetchone()[0]
+            costs = []
         finally:
             con.close()
 
+        cost_of = {(p, e): c for p, e, c in costs}
+        edge_fields = [f for f in EdgeSummary.model_fields if f != "walk_cost_m"]
         self.nodes = {
             n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n))
             for n in nodes
@@ -111,11 +111,12 @@ class _Store:
         edge_features = []
         for row in edges:
             *fields, wkt = row
-            edge = EdgeSummary(
-                **dict(zip(EdgeSummary.model_fields, fields))
-            ).model_dump()
+            edge = dict(zip(edge_fields, fields))
+            edge["walk_cost_m"] = {
+                p: round(cost_of.get((p, edge["id"]), edge["length_m"]), 1) for p in PROFILES
+            }
+            edge = EdgeSummary(**edge).model_dump()
             edge["length_m"] = round(edge["length_m"], 1)
-            edge["walk_cost_m"] = round(edge["walk_cost_m"], 1)
             if edge["pet_mean_c"] is not None:
                 edge["pet_mean_c"] = round(edge["pet_mean_c"], 1)
             self.edges[edge["id"]] = edge
@@ -128,7 +129,11 @@ class _Store:
                     "type": "Feature",
                     "id": edge["id"],
                     "geometry": {"type": "LineString", "coordinates": coords.tolist()},
-                    "properties": edge,
+                    # flat properties: MapLibre expressions can't read nested objects
+                    "properties": {
+                        **{k: v for k, v in edge.items() if k != "walk_cost_m"},
+                        **{f"walk_cost_m_{p}": c for p, c in edge["walk_cost_m"].items()},
+                    },
                 }
             )
 
@@ -148,6 +153,10 @@ class _Store:
         self.edges_geojson = _dump({"type": "FeatureCollection", "features": edge_features})
         self.nodes_geojson = _dump({"type": "FeatureCollection", "features": node_features})
 
+        quantiles = _quantiles([e["length_m"] for e in self.edges.values()])
+        cost_quantiles = _quantiles(
+            [e["walk_cost_m"][DEFAULT_PROFILE] for e in self.edges.values()]
+        )
         lons = [n["lon"] for n in self.nodes.values()]
         lats = [n["lat"] for n in self.nodes.values()]
         self.meta = GraphMeta(
@@ -156,15 +165,17 @@ class _Store:
             component_count=len({n["component"] for n in self.nodes.values()}),
             total_length_km=round(sum(e["length_m"] for e in self.edges.values()) / 1000, 2),
             bounds=Bounds(west=min(lons), south=min(lats), east=max(lons), north=max(lats)),
-            length_quantiles_m={
-                f"p{p}": round(q, 1) for p, q in zip((10, 25, 50, 75, 90), quantiles)
-            },
-            walk_cost_quantiles_m={
-                f"p{p}": round(q, 1) for p, q in zip((10, 25, 50, 75, 90), cost_quantiles)
-            },
+            length_quantiles_m=quantiles,
+            walk_cost_quantiles_m=cost_quantiles,
             highway_counts=_count(e["highway"] for e in self.edges.values()),
             node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
         )
+
+
+def _quantiles(values):
+    """p10..p90 for colour scales."""
+    qs = np.percentile(values, [10, 25, 50, 75, 90])
+    return {f"p{p}": round(float(q), 1) for p, q in zip((10, 25, 50, 75, 90), qs)}
 
 
 def _dump(obj):

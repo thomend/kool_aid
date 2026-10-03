@@ -2,7 +2,7 @@
 
 Team Kool Aid's project for the hackamrhein challenge.
 
-An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres for now; a richer cost model (trees, steps, slope…) is planned.
+An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres stretched by afternoon heat stress (PET), quadratically above 29 °C, with three heat-sensitivity profiles (low, medium, high) you can switch between in the panel; see [scripts/cost_model.py](scripts/cost_model.py). More factors (steps, slope…) are planned.
 
 The web app has two views:
 
@@ -68,7 +68,7 @@ curl -X POST localhost:8050/api/graph/reload
 | `GET /api/graph/meta` | Counts, bounds, value ranges |
 | `GET /api/graph/edges` · `/nodes` | The whole graph as GeoJSON |
 | `GET /api/graph/edges/{id}` · `/nodes/{id}` | Details of one edge or node |
-| `GET /api/layout/cost-space` | Node and edge positions on the map and in cost space |
+| `GET /api/layout/cost-space?profile=medium` | Node and edge positions on the map and in cost space for a heat profile (`low`, `medium`, `high`) |
 | `POST /api/graph/reload` | Reload the database after a rebuild |
 
 ## Good to know

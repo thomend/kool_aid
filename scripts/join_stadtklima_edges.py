@@ -3,7 +3,9 @@
 Reads the edges written by build_graph.py and the Stadtklimaanalyse Basel-Stadt rasters
 (Humanbioklimatische Situation, PET in degrees C at 14:00, 10 m cells, LV95) for today and 2030.
 Each edge is sampled every metre along its geometry, so the mean is length-weighted;
-NoData cells (e.g. buildings) and points outside the raster are ignored.
+NoData cells (e.g. buildings) and points outside the raster are ignored. The squared
+heat excess the cost model needs (cost_model.heat_excess_sq) is averaged over the
+same samples.
 
 Creates one table, edge_stadtklima, one row per edge (edge_id = edges.id).
 Edge ids change whenever build_graph.py rebuilds the graph, so rerun this script
@@ -22,6 +24,8 @@ import pandas as pd
 import rasterio
 import shapely
 from pyproj import Transformer
+
+from cost_model import heat_excess_sq
 
 # The GeoTIFFs carry no CRS; per their .tfw files and metadata they are Swiss LV95
 RASTERS = {
@@ -74,6 +78,7 @@ def build_table(edges):
     samples = pd.DataFrame({"edge_id": edge_ids})
     for column, path in RASTERS.items():
         samples[column] = raster_values(path, xs, ys)
+    samples["heat_excess_sq_mean"] = heat_excess_sq(samples["pet_mean_c"])
     # mean() skips NaN; edges without any valid sample end up NULL
     table = samples.groupby("edge_id", as_index=False).mean()
     return pd.DataFrame({"edge_id": [e[0] for e in edges]}).merge(table, on="edge_id", how="left")
@@ -94,7 +99,8 @@ def write_db(con, table_df, replace):
         CREATE TABLE edge_stadtklima (
             edge_id INTEGER PRIMARY KEY,  -- edges.id
             pet_mean_c DOUBLE,            -- PET at 14:00 today, length-weighted mean, degrees C
-            pet_2030_mean_c DOUBLE        -- PET at 14:00, scenario 2030
+            pet_2030_mean_c DOUBLE,       -- PET at 14:00, scenario 2030
+            heat_excess_sq_mean DOUBLE    -- cost_model.heat_excess_sq of today's PET, length-weighted mean
         )
     """)
     con.execute("INSERT INTO edge_stadtklima BY NAME SELECT * FROM table_df")

@@ -8,7 +8,7 @@ import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, categoryOf, type ColorMode } from "../map/style";
+import { ACCENT, categoryOf } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHighway, formatLength, formatPet } from "../format";
@@ -29,7 +29,6 @@ interface Props {
   data: CostSpaceData;
   meta: GraphMeta;
   scheme: Scheme;
-  mode: ColorMode;
   t: number;
   selection: Selection;
   onSelect: (s: Selection) => void;
@@ -76,8 +75,68 @@ function prepare(geo: number[], cost: number[]) {
   return { geo: g, delta: d };
 }
 
+type Prepared = ReturnType<typeof prepareData>;
+
+function prepareData(data: CostSpaceData) {
+  const e = data.edges;
+  const visibleNodes = data.nodes.node_type
+    .map((type, i) => (type === "junction" ? -1 : i))
+    .filter((i) => i >= 0);
+  const nodeGeo: number[] = [];
+  const nodeCost: number[] = [];
+  for (const i of visibleNodes) {
+    nodeGeo.push(data.nodes.geo[2 * i], data.nodes.geo[2 * i + 1]);
+    nodeCost.push(data.nodes.cost[2 * i], data.nodes.cost[2 * i + 1]);
+  }
+  const nodeIndex = new Map(data.nodes.ids.map((id, i) => [id, i]));
+  const edgeIndex = new Map(e.ids.map((id, i) => [id, i]));
+  const starts = Uint32Array.from([...e.start_indices, e.geo.length / 2]);
+  return {
+    edges: prepare(e.geo, e.cost),
+    starts,
+    nodes: prepare(nodeGeo, nodeCost),
+    allNodes: prepare(data.nodes.geo, data.nodes.cost),
+    visibleNodes,
+    nodeIndex,
+    edgeIndex,
+    rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
+    labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
+  };
+}
+
+// Cost-space positions part way (k) from one heat profile's layout to
+// another's. All profiles share the same geometry, only the deltas differ.
+function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
+  const mix = <T extends { geo: Float32Array; delta: Float32Array }>(a: T, b: T): T => {
+    const delta = new Float32Array(b.delta.length);
+    for (let i = 0; i < delta.length; i++) delta[i] = a.delta[i] + (b.delta[i] - a.delta[i]) * k;
+    return { ...b, delta };
+  };
+  return {
+    ...to,
+    edges: mix(from.edges, to.edges),
+    nodes: mix(from.nodes, to.nodes),
+    allNodes: mix(from.allNodes, to.allNodes),
+    rivers: to.rivers.map((r, i) => mix(from.rivers[i], r)),
+    labels: to.labels.map((l, i) => mix(from.labels[i], l)),
+  };
+}
+
+function sameShape(a: Prepared, b: Prepared) {
+  return (
+    a.edges.delta.length === b.edges.delta.length &&
+    a.allNodes.delta.length === b.allNodes.delta.length &&
+    a.nodes.delta.length === b.nodes.delta.length &&
+    a.rivers.length === b.rivers.length &&
+    a.labels.length === b.labels.length
+  );
+}
+
+const PROFILE_TRANSITION_MS = 900;
+const easeInOutCubic = (k: number) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
+
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, mode, t, selection, onSelect },
+  { data, meta, scheme, t, selection, onSelect },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -89,32 +148,38 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   );
 
   // ---------- static per-dataset arrays ----------
-  const prepared = useMemo(() => {
-    const e = data.edges;
-    const visibleNodes = data.nodes.node_type
-      .map((type, i) => (type === "junction" ? -1 : i))
-      .filter((i) => i >= 0);
-    const nodeGeo: number[] = [];
-    const nodeCost: number[] = [];
-    for (const i of visibleNodes) {
-      nodeGeo.push(data.nodes.geo[2 * i], data.nodes.geo[2 * i + 1]);
-      nodeCost.push(data.nodes.cost[2 * i], data.nodes.cost[2 * i + 1]);
-    }
-    const nodeIndex = new Map(data.nodes.ids.map((id, i) => [id, i]));
-    const edgeIndex = new Map(e.ids.map((id, i) => [id, i]));
-    const starts = Uint32Array.from([...e.start_indices, e.geo.length / 2]);
-    return {
-      edges: prepare(e.geo, e.cost),
-      starts,
-      nodes: prepare(nodeGeo, nodeCost),
-      allNodes: prepare(data.nodes.geo, data.nodes.cost),
-      visibleNodes,
-      nodeIndex,
-      edgeIndex,
-      rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
-      labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
+  const target = useMemo(() => prepareData(data), [data]);
+
+  // A new dataset (another heat profile) is blended in from what was on screen
+  const shown = useRef<Prepared | null>(null);
+  const [transition, setTransition] = useState<{ to: Prepared; from: Prepared | null; k: number }>(
+    () => ({ to: target, from: null, k: 1 }),
+  );
+  if (transition.to !== target) {
+    const from = shown.current && sameShape(shown.current, target) ? shown.current : null;
+    setTransition({ to: target, from, k: from ? 0 : 1 });
+  }
+  useEffect(() => {
+    if (!transition.from || transition.k > 0) return;
+    let frame = 0;
+    const start = performance.now();
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / PROFILE_TRANSITION_MS);
+      setTransition((tr) => ({ ...tr, k: easeInOutCubic(k) }));
+      if (k < 1) frame = requestAnimationFrame(step);
     };
-  }, [data]);
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transition.to]);
+  const prepared = useMemo(
+    () =>
+      transition.from && transition.k < 1
+        ? blendPrepared(transition.from, transition.to, transition.k)
+        : transition.to,
+    [transition],
+  );
+  shown.current = prepared;
 
   // ---------- positions at the current morph state ----------
   const edgePositions = useMemo(
@@ -202,9 +267,9 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const accent = hexToRgba(ACCENT[scheme]);
 
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(mode, meta, scheme);
-    return data.edges.highway.map((h, i) => color(h, data.edges.walk_cost_m[i]));
-  }, [data, meta, mode, scheme]);
+    const color = edgeColorFn(meta, scheme);
+    return Array.from(data.edges.walk_cost_m, (c) => color(c));
+  }, [data, meta, scheme]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -256,7 +321,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [mode, scheme] },
+      updateTriggers: { getColor: [scheme] },
     }),
     selectedPath &&
       new PathLayer({

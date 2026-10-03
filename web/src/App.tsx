@@ -2,9 +2,10 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { fetchCostSpace, fetchMeta, type CostSpaceData, type GraphMeta, type NodeDetail } from "./api";
 import type { Scheme } from "./map/basemap";
-import type { ColorMode } from "./map/style";
+import { DEFAULT_PROFILE, type HeatProfile } from "./profiles";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
 import { Panel } from "./components/Panel";
+import { InfoPopup } from "./components/InfoPopup";
 import { Inspector } from "./components/Inspector";
 import type { CostSpaceHandle } from "./components/CostSpaceView";
 import { MorphSlider } from "./components/MorphSlider";
@@ -40,7 +41,8 @@ export default function App() {
   const [meta, setMeta] = useState<GraphMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
-  const [mode, setMode] = useState<ColorMode>("cost");
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [profile, setProfile] = useState<HeatProfile>(DEFAULT_PROFILE);
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
   const focusNext = useRef(false);
@@ -54,6 +56,11 @@ export default function App() {
     setCostReady(handle !== null);
   }, []);
   const [costData, setCostData] = useState<CostSpaceData | null>(null);
+  const costCache = useRef(new Map<HeatProfile, Promise<CostSpaceData>>());
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+  const hasCostData = useRef(false);
+  hasCostData.current = costData !== null;
   const [costStatus, setCostStatus] = useState<"idle" | "loading" | "error">("idle");
   const [costVisible, setCostVisible] = useState(false);
   const [t, setT] = useState(0);
@@ -84,22 +91,40 @@ export default function App() {
     [setMorph],
   );
 
+  // Fetches (once per profile) and shows the cost space of a heat profile
+  const loadCostSpace = useCallback((p: HeatProfile) => {
+    let request = costCache.current.get(p);
+    if (!request) {
+      request = fetchCostSpace(p);
+      costCache.current.set(p, request);
+      request.catch(() => costCache.current.delete(p));
+    }
+    setCostStatus("loading");
+    request
+      .then((d) => {
+        if (profileRef.current !== p) return; // overtaken by a later profile switch
+        setCostData(d);
+        setCostStatus("idle");
+      })
+      .catch(() => {
+        if (profileRef.current !== p) return;
+        setCostStatus("error");
+        // without any cost space to show, fall back to the map
+        if (!hasCostData.current) setView("geographic");
+      });
+  }, []);
+  const changeProfile = (next: HeatProfile) => {
+    if (next === profile) return;
+    setProfile(next);
+    profileRef.current = next;
+    if (view === "cost-space") loadCostSpace(next);
+  };
+
   const switchView = (next: View) => {
     if (next === view) return;
     setView(next);
     if (next === "cost-space") {
-      if (!costData && costStatus !== "loading") {
-        setCostStatus("loading");
-        fetchCostSpace()
-          .then((d) => {
-            setCostData(d);
-            setCostStatus("idle");
-          })
-          .catch(() => {
-            setCostStatus("error");
-            setView("geographic");
-          });
-      }
+      if (costData?.meta.profile !== profile) loadCostSpace(profile);
       return; // entering happens in the effect below, once the view is mounted
     }
     // Back to geography: unmorph, then hand the camera over to the map
@@ -149,7 +174,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setInfoOpen(false);
+      setSelection(null);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -198,7 +227,7 @@ export default function App() {
           <MapView
           meta={meta}
           scheme={scheme}
-          mode={mode}
+          profile={profile}
           selection={selection}
           onSelect={select}
           onMap={(m) => (mapRef.current = m)}
@@ -215,8 +244,7 @@ export default function App() {
             data={costData}
             meta={meta}
             scheme={scheme}
-            mode={mode}
-            t={t}
+              t={t}
               selection={selection}
               onSelect={select}
             />
@@ -228,9 +256,18 @@ export default function App() {
         <Panel
           meta={meta}
           scheme={scheme}
-          mode={mode}
-          onModeChange={setMode}
+          profile={profile}
+          onProfileChange={changeProfile}
+          infoOpen={infoOpen}
+          onToggleInfo={() => setInfoOpen((o) => !o)}
+        />
+      )}
+
+      {meta && infoOpen && (
+        <InfoPopup
+          meta={meta}
           layout={view === "cost-space" ? (costData?.meta ?? null) : null}
+          onClose={() => setInfoOpen(false)}
         />
       )}
 
@@ -273,7 +310,7 @@ export default function App() {
       </div>
 
       {selection && (
-        <Inspector selection={selection} scheme={scheme} onSelect={select} onNodeLoaded={onNodeLoaded} />
+        <Inspector selection={selection} profile={profile} onSelect={select} onNodeLoaded={onNodeLoaded} />
       )}
 
       {costVisible && view === "cost-space" && (
