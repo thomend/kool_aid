@@ -3,7 +3,7 @@
 import type { Relief } from "./costModel";
 import type { HeatProfile } from "./profiles";
 
-export interface Bounds {
+interface Bounds {
   west: number;
   south: number;
   east: number;
@@ -26,14 +26,11 @@ export interface GraphMeta {
   component_count: number;
   total_length_km: number;
   bounds: Bounds;
-  length_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
   /** Constants of the cost formula; null until scripts/build_layout.py has run. */
   cost_model: CostModel | null;
-  highway_counts: Record<string, number>;
-  node_type_counts: Record<string, number>;
 }
 
-export type NodeType = "intersection" | "junction" | "dead_end";
+type NodeType = "intersection" | "junction" | "dead_end";
 
 export interface EdgeSummary {
   id: number;
@@ -166,10 +163,9 @@ export interface Route {
   cost_m: number;
   minutes: number;
   shade_share: number;
-  pet_mean_c: number | null;
 }
 
-export interface RoutePoint {
+interface RoutePoint {
   node: number;
   lon: number;
   lat: number;

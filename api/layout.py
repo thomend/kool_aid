@@ -1,16 +1,16 @@
-"""Cost-space layout API: graph positions where edge length on screen = cost.
+"""Cost-space API: the network on the map and warped by the heat cartogram.
 
 Serves geographic and cost-space coordinates side by side, in metres relative
 to a common origin (Swiss LV95), so the frontend can morph between the two.
 Data is columnar (flat coordinate lists) to keep the payload small and to
 load straight into GPU buffers.
 
-There is one layout per heat-sensitivity profile (see scripts/cost_model.py) and
-relief variant (tree shade and fountains each counted or not). Each is built on
-first request and then cached.
+There is one cost space per heat-sensitivity profile and relief variant (tree
+shade and fountains each counted or not), built from the stored warp on first
+request and then cached.
 
-Built by scripts/build_layout.py (node_layout, layout_meta) and
-scripts/fetch_context.py (context_lines, context_labels).
+Reads layout_warp and layout_meta (scripts/build_layout.py) and context_lines
+and context_labels (scripts/fetch_context.py).
 """
 
 import json
@@ -44,7 +44,7 @@ class _Store:
     def load(self):
         """Drop the cache and build the default variant, which also checks the tables.
 
-        The other variants are then built in the background (~5 s each), so
+        The other variants are then built in the background (~1 s each), so
         switching profiles or relief is instant once they are done.
         """
         with self.lock:
@@ -82,11 +82,8 @@ def _build(con, profile, trees, fountains):
             params=variant,
         ).fetchdf().iloc[0].to_dict()
         nodes = con.sql("""
-            SELECT n.id, n.node_type, n.degree, n.x, n.y, l.x AS lx, l.y AS ly
-            FROM nodes n JOIN node_layout l
-              ON l.node_id = n.id AND l.profile = $1 AND l.trees = $2 AND l.fountains = $3
-            ORDER BY n.id
-        """, params=variant).fetchnumpy()
+            SELECT id, node_type, degree, x, y FROM nodes WHERE component = 0 ORDER BY id
+        """).fetchnumpy()
         warp = _load_warp(con, variant)
         edges = con.sql("""
             SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
@@ -105,7 +102,7 @@ def _build(con, profile, trees, fountains):
         con.close()
 
     geo_xy = np.column_stack([nodes["x"], nodes["y"]])
-    cost_xy = np.column_stack([nodes["lx"], nodes["ly"]])
+    cost_xy = warp(geo_xy)
     origin = geo_xy.mean(axis=0).round()
 
     # Edges: the geographic polyline, and the same polyline moved by the
@@ -233,8 +230,8 @@ def _grid_lines(nodes_xy, is_near):
             pts[:, axis], pts[:, 1 - axis] = at, along
             near = is_near(pts)
             # split into runs of consecutive points near the network
-            edges = np.flatnonzero(np.diff(np.r_[0, near.astype(int), 0]))
-            for start, stop in zip(edges[::2], edges[1::2]):
+            bounds = np.flatnonzero(np.diff(np.r_[0, near.astype(int), 0]))
+            for start, stop in zip(bounds[::2], bounds[1::2], strict=True):
                 if stop - start >= 2:
                     lines.append(pts[start:stop])
     return lines
@@ -280,10 +277,10 @@ def _nullable_floats(column):
 
 
 def _load_warp(con, variant):
-    """The cartogram warp of a variant (layout_warp), as a function of LV95 points.
+    """The cartogram warp of a variant, as a function of LV95 points.
 
-    Bilinear interpolation of the warped lattice, as cartogram.Warp.apply in
-    scripts/ (the API doesn't import the pipeline).
+    Bilinear interpolation of the stored lattice, as cartogram.Warp.apply
+    (the API doesn't import the pipeline).
     """
     x0, y0, step, nx, ny, moved = con.sql("""
         SELECT x0, y0, step_m, nx, ny, moved FROM layout_warp

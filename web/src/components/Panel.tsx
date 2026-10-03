@@ -1,8 +1,8 @@
-import type { GraphMeta } from "../api";
+import type { CostModel, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { HEAT_RATIOS, heatStops } from "../map/style";
-import { PROFILES, heatFactor, type HeatProfile } from "../profiles";
-import { referenceMedian, type Relief } from "../costModel";
+import { PROFILES, type HeatProfile } from "../profiles";
+import { NO_RELIEF, heatFactor, referenceMedian, type Relief } from "../costModel";
 import { CaneIcon, DropIcon, InfoIcon, RunIcon, TreeIcon, WalkIcon } from "./Icons";
 
 const PROFILE_ICONS: Record<HeatProfile, () => React.JSX.Element> = {
@@ -38,9 +38,6 @@ export function Panel({
   return (
     <aside className="panel glass">
       <header className="panel-header">
-        <div className="app-icon">
-          <WalkIcon />
-        </div>
         <div className="panel-title">
           <h1>Walkable Basel</h1>
           <p className="subtle">Walking cost under heat stress</p>
@@ -54,7 +51,7 @@ export function Panel({
           <InfoIcon />
         </button>
       </header>
-      <ProfilePicker profile={profile} onChange={onProfileChange} />
+      <ProfilePicker model={meta.cost_model} profile={profile} onChange={onProfileChange} />
       <ReliefToggles relief={relief} onChange={onReliefChange} />
       {children}
       <HeatLegend meta={meta} scheme={scheme} profile={profile} />
@@ -63,13 +60,16 @@ export function Panel({
 }
 
 function ProfilePicker({
+  model,
   profile,
   onChange,
 }: {
+  model: CostModel | null;
   profile: HeatProfile;
   onChange: (profile: HeatProfile) => void;
 }) {
-  const factor = heatFactor(profile, 41);
+  // an unshaded street at 41 °C PET, for the caption
+  const factor = model && heatFactor(model, profile, NO_RELIEF, (41 - model.pet_threshold_c) ** 2, 0, 0);
   return (
     <section className="panel-section">
       <h2 id="heat-sensitivity">Heat sensitivity</h2>
@@ -92,9 +92,11 @@ function ProfilePicker({
           );
         })}
       </div>
-      <p className="subtle small">
-        A sunny street at 41 °C PET counts as {factor.toFixed(1).replace(/\.0$/, "")}× its length.
-      </p>
+      {factor && (
+        <p className="subtle small">
+          A sunny street at 41 °C PET counts as {factor.toFixed(1).replace(/\.0$/, "")}× its length.
+        </p>
+      )}
     </section>
   );
 }

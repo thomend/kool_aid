@@ -25,9 +25,9 @@ OSM ──fetch_context.py──▶ context_lines · context_labels (rivers, dis
                                │ build_graph.py
                                ▼
                          nodes · edges · node_paths
-                               │ build_layout.py
+                               │ join_*_edges.py, build_layout.py
                                ▼
-                         node_layout · layout_meta
+              edge_heat · cost_model · layout_warp · layout_meta
                                │ read once at startup (read-only, in memory)
                                ▼
                     FastAPI  api/app.py + api/graph.py   :8050

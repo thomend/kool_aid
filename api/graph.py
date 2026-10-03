@@ -1,9 +1,9 @@
 """Graph API: serves the walkable network from DuckDB as GeoJSON and JSON.
 
 The database is read once at startup (read-only) and kept in memory, so the
-API never holds a lock on the file and build_graph.py can rebuild it at any
+API never holds a lock on the file and the pipeline can rebuild it at any
 time. Call POST /api/graph/reload afterwards to pick up the new data
-(it also reloads the cost-space layout).
+(it also reloads the cost-space layouts).
 """
 
 import json
@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 
 import duckdb
-import numpy as np
 import shapely
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
@@ -34,7 +33,7 @@ class Bounds(BaseModel):
 
 
 class CostModel(BaseModel):
-    """Constants of the walking-cost formula (scripts/cost_model.py), for the frontend.
+    """Constants of the walking-cost formula, see scripts/cost_model.py.
 
     cost = length_m * (1 + heat_excess_sq_mean * relief / scale_c^2), with
     relief = (1 - shade_effect * shade_share) [trees on]
@@ -44,8 +43,8 @@ class CostModel(BaseModel):
     shade_effect: float
     fountain_effect: float
     scale_c: dict[str, float]  # per profile
-    # per profile: length-weighted median heat factor without trees and fountains,
-    # the fixed reference the colours and the cost-space layout are relative to
+    # per profile: median heat factor without trees and fountains, the fixed
+    # reference of the colours and the cost-space layouts
     reference_median: dict[str, float]
 
 
@@ -55,10 +54,7 @@ class GraphMeta(BaseModel):
     component_count: int
     total_length_km: float
     bounds: Bounds
-    length_quantiles_m: dict[str, float]  # p10..p90, for colour scales
     cost_model: CostModel | None  # None until scripts/build_layout.py has run
-    highway_counts: dict[str, int]
-    node_type_counts: dict[str, int]
 
 
 class EdgeSummary(BaseModel):
@@ -71,17 +67,13 @@ class EdgeSummary(BaseModel):
     is_pedestrian: bool
     length_m: float
     component: int
-    pet_mean_c: float | None  # PET at 14:00 today, length-weighted mean, degrees C
-    # cost ingredient (see CostModel): mean squared PET excess over the threshold;
-    # None outside the main component, which has no cost
+    pet_mean_c: float | None  # PET at 14:00, length-weighted mean, degrees C
+    # Cost ingredients (see CostModel); None outside the main component, which has no cost
     heat_excess_sq_mean: float | None
-    # public trees within 15 m, and the share of the length under a tree crown
-    # (softens the heat cost); None without edge_trees, see scripts/join_trees_edges.py
-    tree_count: int | None
-    shade_share: float | None
-    # nearest public fountain (straight line) and the share of the length within
-    # 100 m of one (softens the heat cost); None without edge_fountains,
-    # see scripts/join_fountains_edges.py
+    tree_count: int | None  # public trees within 15 m (scripts/join_trees_edges.py)
+    shade_share: float | None  # share of the length under a tree crown
+    # nearest public fountain (scripts/join_fountains_edges.py), and the share
+    # of the length within 100 m of one
     nearest_fountain: str | None
     nearest_fountain_m: float | None
     fountain_share: float | None
@@ -128,7 +120,7 @@ class _Store:
             con.close()
 
         self.nodes = {
-            n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n))
+            n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n, strict=True))
             for n in nodes
         }
         self.edges = {}
@@ -141,6 +133,7 @@ class _Store:
                 ("id", "source", "target", "way_osm_id", "street_name", "highway",
                  "is_pedestrian", "length_m", "component"),
                 fields,
+                strict=True,
             ))
             pet, excess = heat.get(edge["id"], (None, None))
             edge["pet_mean_c"] = _round(pet, 1)
@@ -194,10 +187,7 @@ class _Store:
             component_count=len({n["component"] for n in self.nodes.values()}),
             total_length_km=round(sum(e["length_m"] for e in self.edges.values()) / 1000, 2),
             bounds=Bounds(west=min(lons), south=min(lats), east=max(lons), north=max(lats)),
-            length_quantiles_m=_quantiles([e["length_m"] for e in self.edges.values()]),
             cost_model=cost_model,
-            highway_counts=_count(e["highway"] for e in self.edges.values()),
-            node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
         )
 
 
@@ -233,21 +223,9 @@ def _round(value, digits):
     return None if value is None else round(value, digits)
 
 
-def _quantiles(values):
-    """p10..p90 for colour scales."""
-    qs = np.percentile(values, [10, 25, 50, 75, 90])
-    return {f"p{p}": round(float(q), 1) for p, q in zip((10, 25, 50, 75, 90), qs)}
-
-
 def _dump(obj):
     return json.dumps(obj, separators=(",", ":")).encode()
 
-
-def _count(values):
-    counts = {}
-    for v in values:
-        counts[v] = counts.get(v, 0) + 1
-    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
 store = _Store()
@@ -255,7 +233,7 @@ store = _Store()
 
 @router.get("/meta", response_model=GraphMeta)
 def get_meta():
-    """Counts, bounds and value ranges of the graph."""
+    """Counts and bounds of the graph, and the constants of the cost model."""
     return store.meta
 
 
@@ -293,7 +271,7 @@ def get_edge(edge_id: int):
 
 @router.post("/reload", response_model=GraphMeta)
 def reload():
-    """Re-read the database (graph and cost-space layout), e.g. after a rebuild."""
+    """Re-read the database (graph and cost-space layouts), e.g. after a rebuild."""
     from .layout import store as layout_store
 
     store.load()

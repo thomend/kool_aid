@@ -1,4 +1,4 @@
-"""Compute the cost-space layout of the walkable graph: Basel as it feels on a hot afternoon.
+"""Compute the cost space of the walkable graph: Basel as it feels on a hot afternoon.
 
 A density cartogram (cartogram.py, Gastner & Newman's diffusion method) grows
 every area by how much harder it is to walk than a typical metre without trees
@@ -12,9 +12,8 @@ sparse, so rivers and parks keep their size. EXAGGERATION makes the effect
 visible: as walked, areas would change by at most ~1.5x. The warp is smooth and
 never folds; streets, rivers, labels and the background grid all move with it.
 
-One layout is computed per heat-sensitivity profile (cost_model.PROFILES) and
-per relief variant: tree shade and fountains each on or off, so users can
-toggle them and see what they change.
+One cartogram is computed per heat-sensitivity profile (cost_model.PROFILES)
+and relief variant (tree shade and fountains each on or off).
 
 Writes:
   edge_heat     edge_id, pet_mean_c, heat_excess_sq_mean, shade_share, fountain_share
@@ -23,7 +22,6 @@ Writes:
   cost_model    one row: the constants of the formula (cost_model.py)
   layout_warp   profile, trees, fountains and the warped lattice (WARP_STEP_M), from
                 which the API moves any point into cost space
-  node_layout   profile, trees, fountains, node_id, x, y   (Swiss LV95 metres)
   layout_meta   one row of parameters and quality measures per profile and variant
 
 Usage:
@@ -90,7 +88,7 @@ def load_edge_heat(con, edge_ids):
         raise SystemExit(
             "edge_stadtklima has no heat_excess_sq_mean; rerun "
             "scripts/join_stadtklima_edges.py --replace"
-        )
+        ) from None
     index = {e: i for i, e in enumerate(heat["edge_id"])}
     rows = np.array([index.get(e, -1) for e in edge_ids])
     found = rows >= 0
@@ -115,16 +113,18 @@ def load_edge_share(con, edge_ids, table, column, script):
     except (duckdb.CatalogException, duckdb.BinderException):
         print(f"No {table}.{column} (run scripts/{script}): costs ignore it")
         return np.zeros(len(edge_ids))
-    by_id = dict(zip(rows["edge_id"], np.ma.filled(rows[column].astype(float), 0.0)))
+    by_id = dict(zip(rows["edge_id"], np.ma.filled(rows[column].astype(float), 0.0), strict=True))
     return np.array([by_id.get(e, 0.0) for e in edge_ids])
 
 
 def fill_from_neighbours(con, edge_ids, values, rounds=10):
-    missing = np.isnan(values)
-    if not missing.any():
+    """Replace NaNs by the mean of the edges sharing a node, then by the median."""
+    if not np.isnan(values).any():
         return values
     ends = con.sql("SELECT id, source, target FROM edges").fetchnumpy()
-    ends_by_id = {e: (s, t) for e, s, t in zip(ends["id"], ends["source"], ends["target"])}
+    ends_by_id = {
+        e: (s, t) for e, s, t in zip(ends["id"], ends["source"], ends["target"], strict=True)
+    }
     src = np.array([ends_by_id[e][0] for e in edge_ids])
     dst = np.array([ends_by_id[e][1] for e in edge_ids])
     nodes, inverse = np.unique(np.r_[src, dst], return_inverse=True)
@@ -145,6 +145,7 @@ def fill_from_neighbours(con, edge_ids, values, rounds=10):
 
 
 def load_graph(con):
+    """Main-component node positions (LV95) and edges (end indices, length, heat), no loops."""
     nodes = con.sql("SELECT id, x, y FROM nodes WHERE component = 0 ORDER BY id").fetchnumpy()
     edges = con.sql("""
         SELECT id, source, target, length_m FROM edges
@@ -154,7 +155,7 @@ def load_graph(con):
     src = np.array([index[s] for s in edges["source"]])
     dst = np.array([index[t] for t in edges["target"]])
     _, heat = load_edge_heat(con, edges["id"])
-    return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"], heat
+    return np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"], heat
 
 
 def heat_density(origin, mid_cell, length, ratio, exaggeration):
@@ -207,7 +208,7 @@ def main():
     args = parser.parse_args()
 
     con = duckdb.connect(str(args.db))
-    node_ids, geo, src, dst, length, heat = load_graph(con)
+    geo, src, dst, length, heat = load_graph(con)
     # Every main-component edge, including self-loops (not part of the density
     # but still walkable and worth colouring/inspecting).
     all_edges = con.sql(
@@ -215,7 +216,6 @@ def main():
     ).fetchnumpy()
     all_pet, all_heat = load_edge_heat(con, all_edges["id"])
 
-    con.execute("DROP TABLE IF EXISTS edge_cost")  # replaced by edge_heat
     con.execute("""
         CREATE OR REPLACE TABLE edge_heat (
             edge_id BIGINT PRIMARY KEY,
@@ -253,12 +253,6 @@ def main():
             nx INTEGER, ny INTEGER,
             moved DOUBLE[],        -- warped (x, y) of every lattice node, x-major
             PRIMARY KEY (profile, trees, fountains)
-        )
-    """)
-    con.execute("""
-        CREATE OR REPLACE TABLE node_layout (
-            profile VARCHAR, trees BOOLEAN, fountains BOOLEAN, node_id BIGINT, x DOUBLE, y DOUBLE,
-            PRIMARY KEY (profile, trees, fountains, node_id)
         )
     """)
     con.execute("""
@@ -301,10 +295,8 @@ def main():
             ratio = edge_factor(heat, scale, trees, fountains) / reference
             density = heat_density(origin, mid_cell, length, ratio, args.exaggeration)
             warp = stored_warp(origin, diffuse(density), bounds)
-            pos = warp.apply(geo)
-
             areas = block_area_ratios(warp, geo)
-            displacement = np.linalg.norm(pos - geo, axis=1)
+            displacement = np.linalg.norm(warp.apply(geo) - geo, axis=1)
             quality = {
                 "area_ratio_p01": float(np.percentile(areas, 1)),
                 "area_ratio_p50": float(np.percentile(areas, 50)),
@@ -320,11 +312,6 @@ def main():
                 "INSERT INTO layout_warp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [profile, trees, fountains, warp.x0, warp.y0, warp.step_m, nx, ny,
                  warp.moved.ravel().round(2).tolist()],
-            )
-            con.execute(
-                """INSERT INTO node_layout
-                   SELECT $1, $2, $3, unnest($4) AS node_id, unnest($5) AS x, unnest($6) AS y""",
-                [profile, trees, fountains, node_ids.tolist(), pos[:, 0].tolist(), pos[:, 1].tolist()],
             )
             relief = (f" * (1 - {SHADE_EFFECT:g} * shade)" if trees else "") + (
                 f" * (1 - {FOUNTAIN_EFFECT:g} * fountain)" if fountains else ""

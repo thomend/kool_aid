@@ -1,40 +1,25 @@
 """Heat-stress cost model for walking, shared by the pipeline scripts.
 
-An edge's walking cost is its length stretched by heat stress, softened by tree shade
-and nearby fountains:
-
     cost_m = length_m * (1 + heat_excess_sq_mean * relief / scale^2)
     relief = (1 - SHADE_EFFECT * shade_share) * (1 - FOUNTAIN_EFFECT * fountain_share)
 
-heat_excess_sq_mean is the mean over the edge of max(PET - 29 C, 0)^2, so without shade
-this is the mean of (1 + (max(PET - 29 C, 0) / scale)^2) along the edge.
+heat_excess_sq_mean is the mean of max(PET - 29 C, 0)^2 over an edge's 1 m
+samples. Below 29 C PET (VDI 3787: at most slight heat stress) a metre costs
+just its length; above, the cost grows quadratically. Averaging per sample
+keeps the cost of the sunny half of a half-shaded edge.
 
-PET (physiological equivalent temperature, VDI 3787) below 29 C is at most
-slight heat stress and costs just the distance. Above it the factor grows
-quadratically, so the hottest stretches get disproportionately expensive.
-The factor is averaged over the 1 m samples of an edge (not computed from the
-mean PET), so a half-shaded, half-sunny edge keeps the cost of its sunny half.
-
-`scale` is the number of degrees above the threshold at which a metre costs
-double; each heat-sensitivity profile has its own (unshaded):
+`scale` is how many degrees above the threshold double the cost of a metre,
+one per heat-sensitivity profile (unshaded):
 
     PET              29 C   33 C   35 C   41 C   44 C
     low    (16 C)    1.0    1.06   1.14   1.56   1.88
     medium (12 C)    1.0    1.11   1.25   2.0    2.56
     high    (8 C)    1.0    1.25   1.56   3.25   4.52
 
-Tree shade (shade_share: share of the edge under a tree crown, from
-join_trees_edges.py) only lowers the heat part: trees don't make a cool street
-cheaper, and a fully shaded edge keeps 1 - SHADE_EFFECT of its extra heat cost
-(medium, 41 C: 2.0 -> 1.5). The PET raster already reflects some of that shade
-(shaded streets are ~0.5 C cooler in it), so the effect stays moderate. The
-cadastre has public trees only, so missing trees never add cost.
-
-Fountains (fountain_share: share of the edge within 100 m of one, from
-join_fountains_edges.py) are a place to drink and cool down on the way. They
-don't shade the walk itself, so they help less than trees: an edge entirely
-within reach of a fountain keeps 1 - FOUNTAIN_EFFECT of its extra heat cost
-(medium, 41 C, no shade: 2.0 -> 1.8; with full shade too: 1.5 -> 1.4).
+Relief only lowers the heat part, so missing trees or fountains never add cost.
+Tree shade (share of the edge under a crown) halves it at most; the effect is
+moderate because the PET raster already reflects some shade. A fountain within
+100 m offers a drink and a cool-down but no shade, so it helps less.
 """
 
 import numpy as np
@@ -49,7 +34,6 @@ PROFILES = {
     "medium": 12.0,  # default
     "high": 8.0,  # elderly people, small children, people with heart conditions
 }
-DEFAULT_PROFILE = "medium"
 
 
 def heat_excess_sq(pet_c):

@@ -12,47 +12,20 @@ import { referenceMedian, type Relief } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
-export interface EdgeCategory {
-  key: string;
-  label: string;
-  highways: string[];
-}
-
-// Order matters: the first category whose highways match wins
-export const EDGE_CATEGORIES: EdgeCategory[] = [
-  {
-    key: "steps",
-    label: "Steps",
-    highways: ["steps"],
-  },
-  {
-    key: "zone",
-    label: "Pedestrian zone",
-    highways: ["pedestrian", "living_street"],
-  },
-  {
-    key: "footpath",
-    label: "Footpath",
-    highways: ["footway", "path", "track", "cycleway"],
-  },
-  {
-    key: "street",
-    label: "Street",
-    highways: [],
-  },
+// Path categories for labels. Order matters: the first match wins, the last is the fallback.
+const EDGE_CATEGORIES: { label: string; highways: string[] }[] = [
+  { label: "Steps", highways: ["steps"] },
+  { label: "Pedestrian zone", highways: ["pedestrian", "living_street"] },
+  { label: "Footpath", highways: ["footway", "path", "track", "cycleway"] },
+  { label: "Street", highways: [] },
 ];
 
-export function categoryOf(highway: string): EdgeCategory {
-  return (
-    EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ??
-    EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1]
-  );
-}
+export const categoryOf = (highway: string) =>
+  EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ?? EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1];
 
 // Diverging heat scale: heat cost per metre relative to a fixed reference, the
-// city median without trees and fountains (length-weighted, per profile), so
-// switching the relief on visibly cools streets down. Cool teal → neutral grey → hot red; teal,
-// not blue, so it never reads as the blue selection accent.
+// median without trees and fountains, so switching them on visibly cools streets
+// down. Teal, not blue, so it never reads as the blue selection accent.
 export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
 const HEAT_RAMP: Record<Scheme, string[]> = {
   light: ["#0b8a92", "#62bcc4", "#c4c4c9", "#f39a5b", "#e0352b"],
@@ -199,7 +172,7 @@ function graphLayers(
 export const ROUTE_SOURCE = "routes";
 export const ROUTE_POINTS_SOURCE = "route-points";
 export const ROUTE_COLOR: Record<"coolest" | "shortest", Record<Scheme, string>> = {
-  coolest: { light: "#007aff", dark: "#0a84ff" },
+  coolest: ACCENT,
   shortest: { light: "#3a3a3c", dark: "#e5e5ea" },
 };
 const emptyCollection = (): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: [] });

@@ -54,7 +54,7 @@ python scripts/build_graph.py     # cut ways into nodes and edges         -> nod
 python scripts/join_stadtklima_edges.py  # PET heat stress along each edge     -> edge_stadtklima
 python scripts/join_trees_edges.py  # Basel-Stadt tree cadastre + tree shade per edge -> trees, edge_trees
 python scripts/join_fountains_edges.py  # Basel fountains + fountain reach per edge  -> fountains, edge_fountains
-python scripts/build_layout.py    # cost ingredients + cost-space cartograms (~2.5 min) -> edge_heat, cost_model, layout_warp, node_layout, layout_meta
+python scripts/build_layout.py    # cost ingredients + cost-space cartograms (~2.5 min) -> edge_heat, cost_model, layout_warp, layout_meta
 ```
 
 `join_trees_edges.py` downloads the tree cadastre (data.bs.ch, dataset 100052) into the table `trees` on its first run and writes per edge the trees within 15 m and the share of its length in tree shade into `edge_trees`. Edge ids change with every `build_graph.py` run, so rerun the join scripts afterwards with `--replace`, then `build_layout.py`, which combines heat, shade and fountains into the costs. It stores the ingredients per edge (`edge_heat`) and the formula's constants (`cost_model`), so the app can compute the cost for any profile with tree shade and fountains switched on or off, and one cost-space cartogram per profile and switch combination (`layout_warp`, see `scripts/cartogram.py`). Colours and layouts are measured against a fixed reference, the median cost without trees and fountains, so switching them on visibly cools the city down.

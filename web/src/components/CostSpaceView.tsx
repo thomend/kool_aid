@@ -1,6 +1,6 @@
-// The cost-space view: the graph laid out so that on-screen edge length equals
-// cost, drawn with deck.gl on a plain canvas in metres. `t` morphs every vertex
-// between its geographic (0) and cost-space (1) position.
+// The cost-space view: the network warped by the heat cartogram, drawn with
+// deck.gl on a plain canvas in metres. `t` morphs every vertex between its
+// geographic (0) and cost-space (1) position.
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
@@ -125,8 +125,8 @@ function prepareData(data: CostSpaceData) {
   };
 }
 
-// Cost-space positions part way (k) from one heat profile's layout to
-// another's. All profiles share the same geometry, only the deltas differ.
+// Cost-space positions part way (k) from one variant (profile, relief) to
+// another. All variants share the same geometry, only the deltas differ.
 function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
   const mix = <T extends { geo: Float32Array; delta: Float32Array }>(a: T, b: T): T => {
     const delta = new Float32Array(b.delta.length);
@@ -176,7 +176,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   // ---------- static per-dataset arrays ----------
   const target = useMemo(() => prepareData(data), [data]);
 
-  // A new dataset (another heat profile) is blended in from what was on screen
+  // A new variant is blended in from what was on screen
   const shown = useRef<Prepared | null>(null);
   const [transition, setTransition] = useState<{ to: Prepared; from: Prepared | null; k: number }>(
     () => ({ to: target, from: null, k: 1 }),

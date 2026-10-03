@@ -5,10 +5,10 @@ density: where the density is above the mean the plane expands, below it
 contracts. The deformation is the flow of a diffusing density, so it is smooth
 and never folds: lines that don't cross on the map don't cross afterwards.
 
-Works in grid units (one cell = `cell_m` metres) on a periodic FFT grid, so the
-density grid needs a generous margin of neutral density (1) around the data.
-The result is a warp: the displaced position of every grid node, from which
-any point is moved by bilinear interpolation (`Warp.apply`).
+Works in grid units on a periodic FFT grid, so the density grid needs a
+generous margin of neutral density (1) around the data. The result is the
+displaced position of every grid node, from which any point is moved by
+bilinear interpolation (Warp.apply).
 """
 
 from dataclasses import dataclass

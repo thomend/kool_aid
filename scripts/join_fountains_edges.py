@@ -83,12 +83,12 @@ def write_fountains(con, fountains_df):
 
 
 def load_fountains(con):
-    """Fountain ids, names and locations in LV95 as shapely points."""
-    ids, names, lon, lat = zip(*con.execute(
-        "SELECT fountain_id, name, lon, lat FROM fountains ORDER BY fountain_id"
-    ).fetchall())
+    """Fountain ids and locations in LV95 as shapely points."""
+    ids, lon, lat = zip(*con.execute(
+        "SELECT fountain_id, lon, lat FROM fountains ORDER BY fountain_id"
+    ).fetchall(), strict=True)
     points = shapely.points(*TO_LV95.transform(np.array(lon), np.array(lat)))
-    return np.array(ids), np.array(names, dtype=object), points
+    return np.array(ids), points
 
 
 def edge_lines(edges):
@@ -161,7 +161,7 @@ def main():
         )
     if not table_exists(con, "fountains"):
         write_fountains(con, fetch_fountains())
-    fountain_ids, _, fountain_points = load_fountains(con)
+    fountain_ids, fountain_points = load_fountains(con)
     table_df = build_table(load_edges(con), fountain_ids, fountain_points)
     write_db(con, table_df)
     con.close()

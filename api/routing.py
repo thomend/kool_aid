@@ -8,8 +8,7 @@ scripts/cost_model.py):
     cost = length_m * (1 + heat_excess_sq_mean * relief / scale_c^2)
 
 Start and end are snapped to the nearest node, at most SNAP_MAX_M away.
-Dijkstra with a binary heap; the graph has ~14k nodes, so a route takes a few
-milliseconds and needs no graph library.
+Plain Dijkstra on ~14k nodes: a comparison takes ~50-100 ms, no graph library needed.
 """
 
 import heapq
@@ -39,7 +38,6 @@ class Route(BaseModel):
     cost_m: float  # walking cost with heat, for the profile and relief asked for
     minutes: float  # walking time at WALK_SPEED_M_S
     shade_share: float  # length-weighted share in tree shade
-    pet_mean_c: float | None  # length-weighted mean PET of the edges that have one
 
 
 class RouteComparison(BaseModel):
@@ -87,7 +85,7 @@ def _factor(edge, model, profile, trees, fountains):
 
 
 def _dijkstra(start, end, weight):
-    """Edge ids of the cheapest route from start to end, or None."""
+    """The cheapest route as [(node the edge is entered from, edge id)], or None."""
     best = {start: 0.0}
     came_from = {}  # node -> (previous node, edge id)
     queue = [(0.0, start)]
@@ -109,11 +107,11 @@ def _dijkstra(start, end, weight):
     while node != start:
         node, edge_id = came_from[node]
         path.append((node, edge_id))
-    return path[::-1]  # (node the edge is entered from, edge id)
+    return path[::-1]
 
 
 def _route(path, cost):
-    coordinates, length, total_cost, shaded, pet_sum, pet_length = [], 0.0, 0.0, 0.0, 0.0, 0.0
+    coordinates, length, total_cost, shaded = [], 0.0, 0.0, 0.0
     for entered_from, edge_id in path:
         edge = store.edges[edge_id]
         coords = store.coords[edge_id]
@@ -123,9 +121,6 @@ def _route(path, cost):
         length += edge["length_m"]
         total_cost += cost[edge_id]
         shaded += edge["length_m"] * (edge["shade_share"] or 0)
-        if edge["pet_mean_c"] is not None:
-            pet_sum += edge["pet_mean_c"] * edge["length_m"]
-            pet_length += edge["length_m"]
     return Route(
         edges=[edge_id for _, edge_id in path],
         coordinates=coordinates,
@@ -133,7 +128,6 @@ def _route(path, cost):
         cost_m=round(total_cost, 1),
         minutes=round(length / WALK_SPEED_M_S / 60, 1),
         shade_share=round(shaded / length, 3) if length else 0.0,
-        pet_mean_c=round(pet_sum / pet_length, 1) if pet_length else None,
     )
 
 
@@ -141,7 +135,7 @@ def _point(text, name):
     try:
         lon, lat = (float(v) for v in text.split(","))
     except ValueError:
-        raise HTTPException(422, f"{name} must be 'lon,lat'")
+        raise HTTPException(422, f"{name} must be 'lon,lat'") from None
     node, distance = network.nearest(lon, lat)
     if distance > SNAP_MAX_M:
         raise HTTPException(422, f"{name} is {distance:.0f} m from the walkable network")
@@ -164,13 +158,13 @@ def compare_routes(
         raise HTTPException(422, f"profile must be one of {', '.join(PROFILES)}")
     network.ensure()
     a, b = _point(start, "start"), _point(end, "end")
+    if a[0] == b[0]:
+        raise HTTPException(422, "start and end snap to the same point")
     length = {e: store.edges[e]["length_m"] for e in network.routable}
     cost = {
         e: length[e] * _factor(store.edges[e], model, profile, trees, fountains)
         for e in network.routable
     }
-    if a[0] == b[0]:
-        raise HTTPException(422, "start and end snap to the same point")
     shortest, coolest = _dijkstra(a[0], b[0], length), _dijkstra(a[0], b[0], cost)
     if shortest is None or coolest is None:
         raise HTTPException(404, "no walkable route between these points")

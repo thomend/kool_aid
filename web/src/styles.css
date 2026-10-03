@@ -132,17 +132,6 @@ code,
   gap: 12px;
 }
 
-.app-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  display: grid;
-  place-items: center;
-  color: white;
-  background: linear-gradient(145deg, #34aadc, #007aff 55%, #5856d6);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
-  flex: none;
-}
 
 h1 {
   font-family: var(--font-display);
@@ -424,20 +413,6 @@ h2,
 
 .segmented button.active {
   font-weight: 600;
-}
-
-.segmented button:disabled {
-  cursor: default;
-  color: var(--text-3);
-}
-
-.badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--fill);
-  color: var(--text-2);
 }
 
 /* ---------- legend ---------- */
