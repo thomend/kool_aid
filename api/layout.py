@@ -72,6 +72,13 @@ def _build(con, profile):
                 ORDER BY id
             """).fetchnumpy()
         try:
+            leverage = dict(con.sql(
+                "SELECT edge_id, leverage_pct FROM edge_leverage WHERE profile = $1",
+                params=[profile],
+            ).fetchall())
+        except duckdb.CatalogException:
+            leverage = {}  # scripts/build_leverage.py has not run
+        try:
             lines = con.sql("SELECT name, wkt FROM context_lines").fetchall()
             labels = con.sql("SELECT name, kind, lon, lat FROM context_labels").fetchall()
         except duckdb.CatalogException:
@@ -153,6 +160,8 @@ def _build(con, profile):
             "length_m": edges["length_m"].round(1).tolist(),
             "pet_mean_c": _nullable_floats(edges["pet_mean_c"]),
             "walk_cost_m": edges["walk_cost_m"].round(1).tolist(),
+            # percentile rank of where shade helps most, 0 where there is no leverage
+            "leverage_pct": [round(leverage.get(e, 0.0), 1) for e in edges["id"].tolist()],
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),

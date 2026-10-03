@@ -1,5 +1,7 @@
+import type { ColorMode } from "../map/style";
 import { PROFILES, heatFactor, type HeatProfile } from "../profiles";
 import { BookIcon, CaneIcon, RunIcon, WalkIcon } from "./Icons";
+import { SegmentedControl } from "./SegmentedControl";
 
 const PROFILE_ICONS: Record<HeatProfile, () => React.JSX.Element> = {
   low: RunIcon,
@@ -10,10 +12,21 @@ const PROFILE_ICONS: Record<HeatProfile, () => React.JSX.Element> = {
 interface Props {
   profile: HeatProfile;
   onProfileChange: (profile: HeatProfile) => void;
+  mode: ColorMode;
+  onModeChange: (mode: ColorMode) => void;
+  /** False until scripts/build_leverage.py has run. */
+  hasLeverage: boolean;
   onOpenGlossary: () => void;
 }
 
-export function Panel({ profile, onProfileChange, onOpenGlossary }: Props) {
+export function Panel({
+  profile,
+  onProfileChange,
+  mode,
+  onModeChange,
+  hasLeverage,
+  onOpenGlossary,
+}: Props) {
   return (
     <aside className="panel glass">
       <header className="panel-header">
@@ -33,6 +46,23 @@ export function Panel({ profile, onProfileChange, onOpenGlossary }: Props) {
           <BookIcon />
         </button>
       </header>
+      <section className="panel-section">
+        <h2>Show</h2>
+        <SegmentedControl
+          label="Colour edges by"
+          value={mode}
+          onChange={onModeChange}
+          options={[
+            { value: "cost", label: "Walking cost" },
+            {
+              value: "leverage",
+              label: "Shade priority",
+              disabled: !hasLeverage,
+              hint: hasLeverage ? undefined : "not built",
+            },
+          ]}
+        />
+      </section>
       <ProfilePicker profile={profile} onChange={onProfileChange} />
     </aside>
   );

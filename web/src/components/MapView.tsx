@@ -10,8 +10,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { buildStyle, categoryOf } from "../map/style";
-import { formatLength } from "../format";
+import { buildStyle, categoryOf, type ColorMode } from "../map/style";
+import { formatLength, formatLeverage } from "../format";
 import type { HeatProfile } from "../profiles";
 
 setWorkerUrl(workerUrl);
@@ -22,6 +22,7 @@ interface Props {
   meta: GraphMeta;
   scheme: Scheme;
   profile: HeatProfile;
+  mode: ColorMode;
   selection: Selection;
   onSelect: (s: Selection) => void;
   onMap: (map: MapLibreMap) => void;
@@ -45,13 +46,22 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
-export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onGraphLoaded }: Props) {
+export function MapView({
+  meta,
+  scheme,
+  profile,
+  mode,
+  selection,
+  onSelect,
+  onMap,
+  onGraphLoaded,
+}: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded, profile });
-  handlers.current = { onSelect, onGraphLoaded, profile };
+  const handlers = useRef({ onSelect, onGraphLoaded, profile, mode });
+  handlers.current = { onSelect, onGraphLoaded, profile, mode };
 
   // Create the map once
   useEffect(() => {
@@ -59,7 +69,7 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, meta, profile),
+      style: buildStyle(scheme, meta, profile, mode),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -118,10 +128,14 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
               detail: [
+                handlers.current.mode === "leverage" &&
+                  (formatLeverage(p[`leverage_pct_${handlers.current.profile}`]) ?? "little shade benefit"),
                 `${formatLength(p[`walk_cost_m_${handlers.current.profile}`])} cost`,
                 formatLength(p.length_m),
                 p.highway.replace("_", " "),
-              ].join(" · "),
+              ]
+                .filter(Boolean)
+                .join(" · "),
             }
           : {
               x: e.point.x,
@@ -152,15 +166,15 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
     };
   }, []);
 
-  // Restyle on theme / heat profile change (MapLibre diffs the styles).
+  // Restyle on theme / heat profile / colour mode change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const styleKey = useRef(`${scheme}|${profile}`);
+  const styleKey = useRef(`${scheme}|${profile}|${mode}`);
   useEffect(() => {
-    const key = `${scheme}|${profile}`;
+    const key = `${scheme}|${profile}|${mode}`;
     if (key === styleKey.current) return;
     styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, meta, profile));
-  }, [scheme, profile, meta]);
+    mapRef.current?.setStyle(buildStyle(scheme, meta, profile, mode));
+  }, [scheme, profile, mode, meta]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

@@ -45,6 +45,7 @@ class GraphMeta(BaseModel):
     walk_cost_quantiles_m: dict[str, float]
     highway_counts: dict[str, int]
     node_type_counts: dict[str, int]
+    walks: int | None  # simulated walks behind the leverage, see scripts/build_leverage.py
 
 
 class EdgeSummary(BaseModel):
@@ -60,6 +61,24 @@ class EdgeSummary(BaseModel):
     pet_mean_c: float | None  # PET at 14:00 today, length-weighted mean, degrees C
     # length_m inflated for heat stress, per profile; see scripts/cost_model.py
     walk_cost_m: dict[str, float]
+    # Where shade helps most, see scripts/build_leverage.py; None off the main network
+    trips_shortest: int | None  # simulated walks whose shortest route uses the edge
+    trips_coolest: dict[str, int] | None  # ... whose coolest route still uses it, per profile
+    leverage_pct: dict[str, float] | None  # percentile rank of the leverage, per profile
+
+
+class LeverageItem(BaseModel):
+    """One street (or unnamed way) in the ranking of where shade helps most."""
+
+    street_name: str | None
+    highway: str
+    near_street: str | None  # a named street at the way's ends, for unnamed ways
+    share_pct: float  # share of the city's total leverage
+    length_m: float
+    pet_mean_c: float | None
+    edge_id: int  # its edge with the highest leverage
+    lon: float
+    lat: float
 
 
 class NodeDetail(BaseModel):
@@ -89,6 +108,7 @@ class _Store:
                 LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
             """, params=[DEFAULT_PROFILE]).fetchall()
             costs = con.sql("SELECT profile, edge_id, cost_m FROM edge_cost").fetchall()
+            leverage, walks = _load_leverage(con)
         except duckdb.CatalogException:
             # edge_cost not built yet (run scripts/build_layout.py): fall back to length.
             edges = con.sql("""
@@ -97,16 +117,20 @@ class _Store:
                 FROM edges
             """).fetchall()
             costs = []
+            leverage, walks = {}, None
         finally:
             con.close()
 
         cost_of = {(p, e): c for p, e, c in costs}
-        edge_fields = [f for f in EdgeSummary.model_fields if f != "walk_cost_m"]
+        per_profile = ("walk_cost_m", "trips_shortest", "trips_coolest", "leverage_pct")
+        edge_fields = [f for f in EdgeSummary.model_fields if f not in per_profile]
         self.nodes = {
             n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n))
             for n in nodes
         }
         self.edges = {}
+        self.leverage = {p: {} for p in PROFILES}  # raw leverage per profile and edge id
+        self.edge_centers = {}
         self.node_edges = {n: [] for n in self.nodes}
         edge_features = []
         for row in edges:
@@ -115,6 +139,12 @@ class _Store:
             edge["walk_cost_m"] = {
                 p: round(cost_of.get((p, edge["id"]), edge["length_m"]), 1) for p in PROFILES
             }
+            lev = {p: leverage[(p, edge["id"])] for p in PROFILES if (p, edge["id"]) in leverage}
+            edge["trips_shortest"] = lev[DEFAULT_PROFILE][0] if lev else None
+            edge["trips_coolest"] = {p: v[1] for p, v in lev.items()} or None
+            edge["leverage_pct"] = {p: round(v[3], 1) for p, v in lev.items()} or None
+            for p, v in lev.items():
+                self.leverage[p][edge["id"]] = v[2]
             edge = EdgeSummary(**edge).model_dump()
             edge["length_m"] = round(edge["length_m"], 1)
             if edge["pet_mean_c"] is not None:
@@ -124,6 +154,7 @@ class _Store:
             if edge["target"] != edge["source"]:
                 self.node_edges[edge["target"]].append(edge["id"])
             coords = shapely.get_coordinates(shapely.from_wkt(wkt)).round(COORD_DECIMALS)
+            self.edge_centers[edge["id"]] = coords[len(coords) // 2].tolist()
             edge_features.append(
                 {
                     "type": "Feature",
@@ -131,8 +162,12 @@ class _Store:
                     "geometry": {"type": "LineString", "coordinates": coords.tolist()},
                     # flat properties: MapLibre expressions can't read nested objects
                     "properties": {
-                        **{k: v for k, v in edge.items() if k != "walk_cost_m"},
+                        **{k: v for k, v in edge.items() if k not in per_profile},
                         **{f"walk_cost_m_{p}": c for p, c in edge["walk_cost_m"].items()},
+                        **{
+                            f"leverage_pct_{p}": v
+                            for p, v in (edge["leverage_pct"] or {}).items()
+                        },
                     },
                 }
             )
@@ -169,7 +204,22 @@ class _Store:
             walk_cost_quantiles_m=cost_quantiles,
             highway_counts=_count(e["highway"] for e in self.edges.values()),
             node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
+            walks=walks,
         )
+
+
+def _load_leverage(con):
+    """(profile, edge_id) -> (trips_shortest, trips_coolest, leverage, leverage_pct), and the
+    number of simulated walks; empty if scripts/build_leverage.py has not run."""
+    try:
+        rows = con.sql("""
+            SELECT profile, edge_id, trips_shortest, trips_coolest, leverage, leverage_pct
+            FROM edge_leverage
+        """).fetchall()
+        walks = con.sql("SELECT walks FROM leverage_meta").fetchone()[0]
+    except duckdb.CatalogException:
+        return {}, None
+    return {(p, e): tuple(v) for p, e, *v in rows}, walks
 
 
 def _quantiles(values):
@@ -228,6 +278,56 @@ def get_edge(edge_id: int):
     if edge is None:
         raise HTTPException(404, f"edge {edge_id} not found")
     return edge
+
+
+@router.get("/leverage", response_model=list[LeverageItem])
+def get_leverage(profile: str = DEFAULT_PROFILE, limit: int = 15):
+    """Streets where shade would help walkers most, best first.
+
+    Edges are grouped by street name; unnamed ways (e.g. separately mapped sidewalks) by
+    their OSM way, labelled with a named street at their ends.
+    """
+    if profile not in PROFILES:
+        raise HTTPException(422, f"profile must be one of {', '.join(PROFILES)}")
+    leverage = store.leverage[profile]
+    total = sum(leverage.values())
+    if not total:
+        return []
+    groups = {}
+    for edge_id, value in leverage.items():
+        edge = store.edges[edge_id]
+        key = edge["street_name"] or f"way {edge['way_osm_id']}"
+        groups.setdefault(key, []).append((value, edge))
+    ranked = sorted(groups.values(), key=lambda g: -sum(v for v, _ in g))[: max(limit, 0)]
+    items = []
+    for group in ranked:
+        _, top = max(group, key=lambda ve: ve[0])
+        length = sum(e["length_m"] for _, e in group)
+        pets = [(e["pet_mean_c"], e["length_m"]) for _, e in group if e["pet_mean_c"] is not None]
+        lon, lat = store.edge_centers[top["id"]]
+        items.append(LeverageItem(
+            street_name=top["street_name"],
+            highway=top["highway"],
+            near_street=None if top["street_name"] else _near_street(top),
+            share_pct=round(100 * sum(v for v, _ in group) / total, 1),
+            length_m=round(length, 1),
+            pet_mean_c=round(sum(p * l for p, l in pets) / sum(l for _, l in pets), 1)
+            if pets else None,
+            edge_id=top["id"],
+            lon=lon,
+            lat=lat,
+        ))
+    return items
+
+
+def _near_street(edge):
+    """A named street meeting the edge at either end."""
+    for node in (edge["source"], edge["target"]):
+        for other in store.node_edges[node]:
+            name = store.edges[other]["street_name"]
+            if name:
+                return name
+    return None
 
 
 @router.post("/reload", response_model=GraphMeta)

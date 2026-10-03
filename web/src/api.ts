@@ -19,6 +19,8 @@ export interface GraphMeta {
   walk_cost_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
   highway_counts: Record<string, number>;
   node_type_counts: Record<string, number>;
+  /** Simulated walks behind the leverage (scripts/build_leverage.py); null if not built. */
+  walks: number | null;
 }
 
 export type NodeType = "intersection" | "junction" | "dead_end";
@@ -37,6 +39,28 @@ export interface EdgeSummary {
   pet_mean_c: number | null;
   /** Walking cost in metres per heat profile: length_m inflated for heat stress, see scripts/cost_model.py. */
   walk_cost_m: Record<HeatProfile, number>;
+  /** Simulated walks whose shortest route uses the edge; null off the main network. */
+  trips_shortest: number | null;
+  /** Simulated walks whose coolest route still uses the edge, per heat profile. */
+  trips_coolest: Record<HeatProfile, number> | null;
+  /** Percentile rank (0–100) of where shade would help most, per heat profile. */
+  leverage_pct: Record<HeatProfile, number> | null;
+}
+
+/** A street in the ranking of where shade would help walkers most. */
+export interface LeverageItem {
+  street_name: string | null;
+  highway: string;
+  /** A named street at the way's ends, for unnamed ways such as sidewalks. */
+  near_street: string | null;
+  /** Share of the city's total leverage, in percent. */
+  share_pct: number;
+  length_m: number;
+  pet_mean_c: number | null;
+  /** The street's edge with the highest leverage. */
+  edge_id: number;
+  lon: number;
+  lat: number;
 }
 
 export interface NodeDetail {
@@ -103,6 +127,8 @@ export interface CostSpaceData {
     length_m: number[];
     pet_mean_c: (number | null)[];
     walk_cost_m: number[];
+    /** Percentile rank of the leverage, 0 where shade would not help. */
+    leverage_pct: number[];
     start_indices: number[];
     geo: number[];
     cost: number[];
@@ -112,6 +138,9 @@ export interface CostSpaceData {
     labels: { name: string; kind: string; geo: number[]; cost: number[] }[];
   };
 }
+
+export const fetchLeverage = (profile: HeatProfile, signal?: AbortSignal) =>
+  getJson<LeverageItem[]>(`/api/graph/leverage?profile=${profile}`, signal);
 
 export const fetchCostSpace = (profile: HeatProfile, signal?: AbortSignal) =>
   getJson<CostSpaceData>(`/api/layout/cost-space?profile=${profile}`, signal);

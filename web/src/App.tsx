@@ -1,12 +1,21 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { fetchCostSpace, fetchMeta, type CostSpaceData, type GraphMeta, type NodeDetail } from "./api";
+import {
+  fetchCostSpace,
+  fetchMeta,
+  type CostSpaceData,
+  type GraphMeta,
+  type LeverageItem,
+  type NodeDetail,
+} from "./api";
 import type { Scheme } from "./map/basemap";
+import type { ColorMode } from "./map/style";
 import { DEFAULT_PROFILE, type HeatProfile } from "./profiles";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
 import { Panel } from "./components/Panel";
 import { Inspector } from "./components/Inspector";
 import { Glossary } from "./components/Glossary";
+import { ShadeRanking } from "./components/ShadeRanking";
 import type { CostSpaceHandle } from "./components/CostSpaceView";
 import { SegmentedControl } from "./components/SegmentedControl";
 import { MinusIcon, MoonIcon, PlusIcon, RecenterIcon, SunIcon } from "./components/Icons";
@@ -41,6 +50,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
   const [profile, setProfile] = useState<HeatProfile>(DEFAULT_PROFILE);
+  const [mode, setMode] = useState<ColorMode>("cost");
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
   const [glossaryOpen, setGlossaryOpen] = useState(false);
@@ -204,6 +214,18 @@ export default function App() {
     [costVisible],
   );
 
+  // A street picked from the shade ranking: select its top edge and bring it into view
+  const pickStreet = (item: LeverageItem) => {
+    select({ kind: "edge", id: item.edge_id });
+    if (costVisible) {
+      const zoom = costRef.current?.getCamera().mapZoom ?? 16;
+      costRef.current?.focus(item.lon, item.lat, Math.max(zoom, 16));
+    } else {
+      const map = mapRef.current;
+      map?.easeTo({ center: [item.lon, item.lat], zoom: Math.max(map.getZoom(), 16), duration: 800 });
+    }
+  };
+
   if (error) {
     return (
       <div className="center-screen">
@@ -223,13 +245,14 @@ export default function App() {
       {meta && (
         <div className={`view-layer ${costVisible ? "hidden" : ""}`}>
           <MapView
-          meta={meta}
-          scheme={scheme}
-          profile={profile}
-          selection={selection}
-          onSelect={select}
-          onMap={(m) => (mapRef.current = m)}
-          onGraphLoaded={() => setGraphLoaded(true)}
+            meta={meta}
+            scheme={scheme}
+            profile={profile}
+            mode={mode}
+            selection={selection}
+            onSelect={select}
+            onMap={(m) => (mapRef.current = m)}
+            onGraphLoaded={() => setGraphLoaded(true)}
           />
         </div>
       )}
@@ -239,10 +262,11 @@ export default function App() {
           <Suspense fallback={null}>
             <CostSpaceView
               ref={costRefCallback}
-            data={costData}
-            meta={meta}
-            scheme={scheme}
-            t={t}
+              data={costData}
+              meta={meta}
+              scheme={scheme}
+              mode={mode}
+              t={t}
               selection={selection}
               onSelect={select}
             />
@@ -253,8 +277,13 @@ export default function App() {
       <Panel
         profile={profile}
         onProfileChange={changeProfile}
+        mode={mode}
+        onModeChange={setMode}
+        hasLeverage={Boolean(meta?.walks)}
         onOpenGlossary={() => setGlossaryOpen(true)}
       />
+
+      {mode === "leverage" && <ShadeRanking profile={profile} onPick={pickStreet} />}
 
       <div className="view-switch glass">
         <SegmentedControl
@@ -295,7 +324,13 @@ export default function App() {
       </div>
 
       {selection && (
-        <Inspector selection={selection} profile={profile} onSelect={select} onNodeLoaded={onNodeLoaded} />
+        <Inspector
+          selection={selection}
+          profile={profile}
+          walks={meta?.walks ?? null}
+          onSelect={select}
+          onNodeLoaded={onNodeLoaded}
+        />
       )}
 
 

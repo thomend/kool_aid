@@ -9,6 +9,8 @@ import { ChevronIcon, CloseIcon } from "./Icons";
 interface Props {
   selection: NonNullable<Selection>;
   profile: HeatProfile;
+  /** Simulated walks behind the shade benefit; null if not built. */
+  walks: number | null;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -18,7 +20,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, profile, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, profile, walks, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export function Inspector({ selection, profile, onSelect, onNodeLoaded }: Props)
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} profile={profile} onSelect={onSelect} />
+        <EdgeCard edge={current.data} profile={profile} walks={walks} onSelect={onSelect} />
       ) : (
         <NodeCard node={current.data} onSelect={onSelect} />
       )}
@@ -69,10 +71,12 @@ function Chip({ highway }: { highway: string }) {
 function EdgeCard({
   edge,
   profile,
+  walks,
   onSelect,
 }: {
   edge: EdgeSummary;
   profile: HeatProfile;
+  walks: number | null;
   onSelect: Props["onSelect"];
 }) {
   return (
@@ -91,6 +95,7 @@ function EdgeCard({
         {formatLength(edge.length_m)} long
         {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
       </p>
+      <ShadeBenefit edge={edge} profile={profile} walks={walks} />
       <ul className="list">
         {(
           [
@@ -115,6 +120,43 @@ function EdgeCard({
       >
         View way {edge.way_osm_id} on OpenStreetMap
       </a>
+    </>
+  );
+}
+
+// Where shade would help most, see scripts/build_leverage.py
+function ShadeBenefit({
+  edge,
+  profile,
+  walks,
+}: {
+  edge: EdgeSummary;
+  profile: HeatProfile;
+  walks: number | null;
+}) {
+  const pct = edge.leverage_pct?.[profile];
+  const shortest = edge.trips_shortest;
+  const coolest = edge.trips_coolest?.[profile];
+  if (pct === undefined || !walks || !shortest || coolest === undefined) return null;
+  const kept = coolest / shortest;
+  return (
+    <>
+      <p className="section-label">Shade benefit</p>
+      <dl className="mini-stats">
+        <div>
+          <dt>Rank</dt>
+          <dd>{pct > 0 ? `Top ${Math.max(1, Math.ceil(100 - pct))} %` : "–"}</dd>
+        </div>
+        <div>
+          <dt>Share of walks</dt>
+          <dd>{((100 * shortest) / walks).toFixed(2)} %</dd>
+        </div>
+      </dl>
+      <p className="subtle small">
+        {kept >= 1
+          ? "Walks avoiding heat use it even more: the ways around are hotter."
+          : `${Math.round(100 * kept)} % of the walks through here cannot avoid it to stay cool.`}
+      </p>
     </>
   );
 }

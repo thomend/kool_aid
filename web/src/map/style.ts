@@ -11,6 +11,9 @@ import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
+/** What the edge colour shows: walking cost, or where shade would help most. */
+export type ColorMode = "cost" | "leverage";
+
 export interface EdgeCategory {
   key: string;
   label: string;
@@ -62,11 +65,36 @@ export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
   return values.map((v, i) => [v, COST_RAMP[scheme][i]]);
 }
 
+// Grey → red: edges where shade would help little fade out, the top few percent glow red.
+// Stops are percentile ranks of the leverage (scripts/build_leverage.py).
+const LEVERAGE_RAMP: Record<Scheme, string[]> = {
+  light: ["#d1d1d6", "#dcc7ad", "#ff7a00", "#ff3b30", "#a8002a"],
+  dark: ["#48484a", "#6b5a45", "#ff9f0a", "#ff453a", "#ff2d55"],
+};
+const LEVERAGE_PCT = [0, 70, 90, 97, 99.5];
+
+export function leverageStops(scheme: Scheme): [number, string][] {
+  return LEVERAGE_PCT.map((v, i) => [v, LEVERAGE_RAMP[scheme][i]]);
+}
+
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): ExpressionSpecification {
+function edgeColor(
+  meta: GraphMeta,
+  scheme: Scheme,
+  profile: HeatProfile,
+  mode: ColorMode,
+): ExpressionSpecification {
+  if (mode === "leverage") {
+    return [
+      "interpolate",
+      ["linear"],
+      ["coalesce", ["get", `leverage_pct_${profile}`], 0],
+      ...leverageStops(scheme).flat(),
+    ] as ExpressionSpecification;
+  }
   return [
     "interpolate",
     ["linear"],
@@ -97,7 +125,12 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): LayerSpecification[] {
+function graphLayers(
+  meta: GraphMeta,
+  scheme: Scheme,
+  profile: HeatProfile,
+  mode: ColorMode,
+): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -117,7 +150,7 @@ function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): Lay
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile, mode)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -155,9 +188,14 @@ function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): Lay
   ];
 }
 
-export function buildStyle(scheme: Scheme, meta: GraphMeta, profile: HeatProfile): StyleSpecification {
+export function buildStyle(
+  scheme: Scheme,
+  meta: GraphMeta,
+  profile: HeatProfile,
+  mode: ColorMode,
+): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(meta, scheme, profile);
+  const [glow, edges, nodes] = graphLayers(meta, scheme, profile, mode);
   return {
     version: 8,
     glyphs: GLYPHS,

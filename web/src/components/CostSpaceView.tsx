@@ -8,10 +8,10 @@ import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, categoryOf } from "../map/style";
+import { ACCENT, categoryOf, type ColorMode } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
-import { formatHighway, formatLength, formatPet } from "../format";
+import { formatHighway, formatLength, formatLeverage, formatPet } from "../format";
 import type { Selection } from "./MapView";
 
 export interface CostSpaceHandle {
@@ -29,6 +29,7 @@ interface Props {
   data: CostSpaceData;
   meta: GraphMeta;
   scheme: Scheme;
+  mode: ColorMode;
   t: number;
   selection: Selection;
   onSelect: (s: Selection) => void;
@@ -136,7 +137,7 @@ const PROFILE_TRANSITION_MS = 900;
 const easeInOutCubic = (k: number) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
 
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, t, selection, onSelect },
+  { data, meta, scheme, mode, t, selection, onSelect },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -267,9 +268,10 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const accent = hexToRgba(ACCENT[scheme]);
 
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(meta, scheme);
-    return Array.from(data.edges.walk_cost_m, (c) => color(c));
-  }, [data, meta, scheme]);
+    const color = edgeColorFn(meta, scheme, mode);
+    const values = mode === "leverage" ? data.edges.leverage_pct : data.edges.walk_cost_m;
+    return Array.from(values, (v) => color(v));
+  }, [data, meta, scheme, mode]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -321,7 +323,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [scheme] },
+      updateTriggers: { getColor: [scheme, mode] },
     }),
     selectedPath &&
       new PathLayer({
@@ -413,6 +415,9 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
         detail: [
+          ...(mode === "leverage"
+            ? [formatLeverage(data.edges.leverage_pct[i]) ?? "little shade benefit"]
+            : []),
           formatLength(data.edges.walk_cost_m[i]) + " cost",
           formatHighway(data.edges.highway[i]).toLowerCase(),
           ...(pet ? [pet] : []),

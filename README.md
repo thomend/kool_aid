@@ -9,7 +9,7 @@ The web app has two views:
 - **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by cost. Click any node or edge to inspect it.
 - **Cost space**: the same graph redrawn so that each edge's on-screen length equals its cost, while staying close to its real location. Switching views animates the city between the two layouts.
 
-A glossary (book icon next to the title) explains the network figures, the cost model and both views.
+**Shade priority** colours the network by where shade would remove the most heat from everyday walks, estimated from simulated walks ([scripts/build_leverage.py](scripts/build_leverage.py)), with a ranking of the top streets. A glossary (book icon next to the title) explains the network figures, the cost model, shade priority and both views.
 
 Data comes from OpenStreetMap, is stored in DuckDB, and is served to a React frontend by a FastAPI backend.
 
@@ -55,9 +55,10 @@ python scripts/build_graph.py     # cut ways into nodes and edges         -> nod
 python scripts/join_stadtklima_edges.py --replace  # PET raster per edge  -> edge_stadtklima
 python scripts/join_trees_edges.py --replace       # trees near each edge -> trees, edge_trees
 python scripts/build_layout.py    # cost per heat profile + layouts       -> edge_cost, node_layout, layout_meta
+python scripts/build_leverage.py --replace  # where shade helps most (~30 s) -> edge_leverage, leverage_meta
 ```
 
-The two `join_` scripts key their tables on edge ids, which change with every `build_graph.py` run, so rerun them after it. `build_layout.py` needs `edge_stadtklima`, so it runs last. On its first run, `join_trees_edges.py` downloads the Basel-Stadt tree cadastre (data.bs.ch, dataset 100052) into the table `trees`; later runs reuse it offline.
+The two `join_` scripts key their tables on edge ids, which change with every `build_graph.py` run, so rerun them after it. `build_layout.py` needs `edge_stadtklima`, and `build_leverage.py` needs the costs from `build_layout.py`, so they run last. On its first run, `join_trees_edges.py` downloads the Basel-Stadt tree cadastre (data.bs.ch, dataset 100052) into the table `trees`; later runs reuse it offline.
 
 The two `fetch_` scripts need internet access (Overpass API, which is sometimes slow; the scripts fall back to mirror servers). The two `build_` scripts run offline.
 

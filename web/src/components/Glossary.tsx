@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { GraphMeta, LayoutMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { costStops } from "../map/style";
+import { costStops, leverageStops } from "../map/style";
 import { formatCount, formatLength } from "../format";
 import { PET_THRESHOLD_C, PROFILES, heatFactor, type HeatProfile } from "../profiles";
 import { CloseIcon } from "./Icons";
@@ -163,6 +163,40 @@ export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
         </section>
 
         <section className="glossary-section">
+          <h3>Shade priority</h3>
+          <p>
+            A heat map shows where it is hot. Shade priority shows where shade would remove the
+            most heat from everyday walks: streets that are hot <em>and</em> that many walks cannot
+            avoid. A hot street with a shaded street next to it scores low; a hot link with no way
+            around scores high.
+          </p>
+          <dl className="terms">
+            <dt>How it is estimated</dt>
+            <dd>
+              {meta.walks
+                ? `${formatCount(meta.walks)} simulated walks`
+                : "Simulated walks"}{" "}
+              of up to 2 km between random points of the network. Each walk takes its coolest route for
+              the selected heat sensitivity. An edge’s leverage is its heat surcharge (cost minus
+              length) times the number of walks that still use it.
+            </dd>
+            <dt>Colour</dt>
+            <dd>
+              Rank of the leverage among all edges: grey where shade would help little, red for the
+              top few percent. The ranking lists the streets with the largest share.
+            </dd>
+            <dt>Limits</dt>
+            <dd>
+              Walks are simulated, not counted: start points are spread evenly and every nearby
+              node is a destination, so busy places like stations are not weighted extra. Shading an
+              edge is assumed to bring its cost back to its length, and walks that would switch
+              onto it once shaded are not counted.
+            </dd>
+          </dl>
+          <LeverageLegend scheme={scheme} />
+        </section>
+
+        <section className="glossary-section">
           <h3>Views</h3>
           <dl className="terms">
             <dt>Geographic</dt>
@@ -197,6 +231,22 @@ export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
           )}
         </section>
       </section>
+    </div>
+  );
+}
+
+function LeverageLegend({ scheme }: { scheme: Scheme }) {
+  const stops = leverageStops(scheme);
+  const gradient = `linear-gradient(90deg, ${stops.map(([, c]) => c).join(", ")})`;
+  return (
+    <div className="legend">
+      <h4>Edge colour in shade priority</h4>
+      <div className="ramp" style={{ background: gradient }} />
+      <div className="ramp-labels">
+        <span>little benefit</span>
+        <span>top 10 %</span>
+        <span>top 1 %</span>
+      </div>
     </div>
   );
 }
