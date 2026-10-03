@@ -17,8 +17,11 @@ were tried too: they inflate the whole city and fling dead ends outward,
 which makes the view unreadable.)
 
 Writes:
-  node_layout   node_id, x, y   (Swiss LV95 metres, same frame as nodes.x/y)
+  node_layout   node_id, x, y          (Swiss LV95 metres, same frame as nodes.x/y)
   layout_meta   one row of parameters and quality measures
+  edge_cost     edge_id, pet_mean_c, cost_m, for every main-component edge
+                (so the API can colour by, and the frontend inspect, the same
+                cost that shaped the layout, without recomputing it)
 
 Usage:
     python scripts/build_layout.py [--db data/basel.duckdb] [--alpha 0.02]
@@ -31,22 +34,49 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
+# PET (physiological equivalent temperature) thermal-sensation scale, VDI 3787:
+# up to 23 C is "no thermal stress"; above that, perceived heat stress rises
+# toward "extreme" above 41 C. PET_SCALE_C is how many degrees above comfort
+# double the walking cost of a metre, so a 41 C hot stretch costs ~2x its
+# physical length and a shaded, comfortable one still costs just its length.
+PET_COMFORT_C = 23.0
+PET_SCALE_C = 18.0
 
-def edge_cost(length_m):
-    """Walking cost of an edge in metres. Only length for now; the cost model goes here."""
-    return length_m
+
+def edge_cost(length_m, pet_mean_c):
+    """Walking cost of an edge in metres, inflated for heat stress.
+
+    Edges without a PET sample (pet_mean_c is NaN, e.g. no raster coverage)
+    cost their plain length, same as edges at a comfortable temperature.
+    """
+    heat_stress = np.where(
+        np.isnan(pet_mean_c), 0.0, np.maximum(pet_mean_c - PET_COMFORT_C, 0.0)
+    )
+    return length_m * (1 + heat_stress / PET_SCALE_C)
+
+
+def load_edge_pet(con, edge_ids):
+    """PET per edge id, NaN where edge_stadtklima is missing or has no sample."""
+    try:
+        pet = con.sql("SELECT edge_id, pet_mean_c FROM edge_stadtklima").fetchnumpy()
+    except duckdb.CatalogException:
+        return np.full(len(edge_ids), np.nan)
+    values = np.ma.filled(pet["pet_mean_c"].astype(float), np.nan)
+    by_id = dict(zip(pet["edge_id"], values))
+    return np.array([by_id.get(e, np.nan) for e in edge_ids], dtype=float)
 
 
 def load_graph(con):
     nodes = con.sql("SELECT id, x, y FROM nodes WHERE component = 0 ORDER BY id").fetchnumpy()
     edges = con.sql("""
-        SELECT source, target, length_m FROM edges
+        SELECT id, source, target, length_m FROM edges
         WHERE component = 0 AND source <> target
     """).fetchnumpy()
     index = {node_id: i for i, node_id in enumerate(nodes["id"])}
     src = np.array([index[s] for s in edges["source"]])
     dst = np.array([index[t] for t in edges["target"]])
-    return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"]
+    pet = load_edge_pet(con, edges["id"])
+    return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"], pet
 
 
 def unique_edges(src, dst, cost):
@@ -95,8 +125,8 @@ def main():
     started = time.time()
 
     con = duckdb.connect(str(args.db))
-    node_ids, geo, src, dst, length = load_graph(con)
-    a, b, cost = unique_edges(src, dst, edge_cost(length))
+    node_ids, geo, src, dst, length, pet = load_graph(con)
+    a, b, cost = unique_edges(src, dst, edge_cost(length, pet))
 
     pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
 
@@ -134,8 +164,32 @@ def main():
         )
     """)
     con.execute(
-        "INSERT INTO layout_meta VALUES (now(), 'length_m', ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO layout_meta VALUES (now(), 'length_m * heat_factor(pet_mean_c)', ?, ?, ?, ?, ?, ?, ?, ?)",
         [args.alpha, iterations, *quality.values()],
+    )
+
+    # Every main-component edge's cost, including self-loops (dropped from the
+    # spring layout above but still walkable and worth colouring/inspecting).
+    all_edges = con.sql(
+        "SELECT id, length_m FROM edges WHERE component = 0 ORDER BY id"
+    ).fetchnumpy()
+    all_pet = load_edge_pet(con, all_edges["id"])
+    all_cost = edge_cost(all_edges["length_m"], all_pet)
+    con.execute("""
+        CREATE OR REPLACE TABLE edge_cost (
+            edge_id BIGINT PRIMARY KEY,
+            pet_mean_c DOUBLE,  -- NULL where edge_stadtklima has no sample
+            cost_m DOUBLE       -- edge_cost(length_m, pet_mean_c)
+        )
+    """)
+    con.execute(
+        """INSERT INTO edge_cost
+           SELECT unnest($1) AS edge_id, unnest($2) AS pet_mean_c, unnest($3) AS cost_m""",
+        [
+            all_edges["id"].tolist(),
+            [None if np.isnan(v) else v for v in all_pet.tolist()],
+            all_cost.tolist(),
+        ],
     )
     con.close()
 

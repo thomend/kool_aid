@@ -61,7 +61,7 @@ const COST_RAMP: Record<Scheme, string[]> = {
 };
 
 export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
-  const q = meta.length_quantiles_m;
+  const q = meta.walk_cost_quantiles_m;
   const values = [q.p10, q.p50, q.p75, q.p90, q.p90 * 2.5];
   // interpolate needs strictly ascending stops
   for (let i = 1; i < values.length; i++) values[i] = Math.max(values[i], values[i - 1] + 0.1);
@@ -77,7 +77,7 @@ function edgeColor(mode: ColorMode, meta: GraphMeta, scheme: Scheme): Expression
     return [
       "interpolate",
       ["linear"],
-      ["get", "length_m"],
+      ["get", "walk_cost_m"],
       ...costStops(meta, scheme).flat(),
     ] as ExpressionSpecification;
   }

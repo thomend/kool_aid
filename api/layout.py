@@ -47,11 +47,23 @@ def _build(con):
             FROM nodes n JOIN node_layout l ON l.node_id = n.id
             ORDER BY n.id
         """).fetchnumpy()
-        edges = con.sql("""
-            SELECT id, source, target, street_name, highway, is_pedestrian, length_m, wkt
-            FROM edges WHERE component = 0
-            ORDER BY id
-        """).fetchnumpy()
+        try:
+            edges = con.sql("""
+                SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
+                       e.length_m, ec.pet_mean_c, COALESCE(ec.cost_m, e.length_m) AS walk_cost_m,
+                       e.wkt
+                FROM edges e LEFT JOIN edge_cost ec ON ec.edge_id = e.id
+                WHERE e.component = 0
+                ORDER BY e.id
+            """).fetchnumpy()
+        except duckdb.CatalogException:
+            # edge_cost not built yet (older build_layout.py run): fall back to length.
+            edges = con.sql("""
+                SELECT id, source, target, street_name, highway, is_pedestrian, length_m,
+                       NULL AS pet_mean_c, length_m AS walk_cost_m, wkt
+                FROM edges WHERE component = 0
+                ORDER BY id
+            """).fetchnumpy()
         try:
             lines = con.sql("SELECT name, wkt FROM context_lines").fetchall()
             labels = con.sql("SELECT name, kind, lon, lat FROM context_labels").fetchall()
@@ -132,12 +144,22 @@ def _build(con):
             "highway": edges["highway"].tolist(),
             "is_pedestrian": edges["is_pedestrian"].tolist(),
             "length_m": edges["length_m"].round(1).tolist(),
+            "pet_mean_c": _nullable_floats(edges["pet_mean_c"]),
+            "walk_cost_m": edges["walk_cost_m"].round(1).tolist(),
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
         },
         "context": {"lines": context_lines, "labels": context_labels},
     }
+
+
+def _nullable_floats(column):
+    """Round a column of possibly-NULL doubles, keeping NULL/NaN as None."""
+    return [
+        None if v is None or np.isnan(v) else round(float(v), 1)
+        for v in np.ma.filled(np.ma.masked_invalid(column.astype(float)), np.nan)
+    ]
 
 
 def _displacement_field(points, offsets):
