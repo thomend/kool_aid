@@ -48,18 +48,20 @@ export function categoryOf(highway: string): EdgeCategory {
   );
 }
 
-// Cool → hot: short (cheap) edges are blue, long (expensive) ones pink
-const COST_RAMP: Record<Scheme, string[]> = {
-  light: ["#5ac8fa", "#007aff", "#5856d6", "#af52de", "#ff2d55"],
-  dark: ["#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff375f"],
+// Diverging heat scale: heat cost per metre relative to the city median
+// (length-weighted, per profile). Cool teal → neutral grey → hot red; teal,
+// not blue, so it never reads as the blue selection accent.
+export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
+const HEAT_RAMP: Record<Scheme, string[]> = {
+  light: ["#0b8a92", "#62bcc4", "#c4c4c9", "#f39a5b", "#e0352b"],
+  dark: ["#40c8e0", "#2c8c99", "#636366", "#d9733f", "#ff453a"],
 };
+export const NO_DATA: Record<Scheme, string> = { light: "#d1d1d6", dark: "#48484a" };
 
-export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
-  const q = meta.walk_cost_quantiles_m;
-  const values = [q.p10, q.p50, q.p75, q.p90, q.p90 * 2.5];
-  // interpolate needs strictly ascending stops
-  for (let i = 1; i < values.length; i++) values[i] = Math.max(values[i], values[i - 1] + 0.1);
-  return values.map((v, i) => [v, COST_RAMP[scheme][i]]);
+/** [heat factor, colour] stops for a profile, centred on its city median. */
+export function heatStops(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): [number, string][] {
+  const median = meta.heat_factor_median[profile];
+  return HEAT_RATIOS.map((r, i) => [r * median, HEAT_RAMP[scheme][i]]);
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
@@ -67,11 +69,12 @@ const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
 function edgeColor(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): ExpressionSpecification {
+  const key = `heat_factor_${profile}`;
   return [
-    "interpolate",
-    ["linear"],
-    ["get", `walk_cost_m_${profile}`],
-    ...costStops(meta, scheme).flat(),
+    "case",
+    ["has", key],
+    ["interpolate", ["linear"], ["get", key], ...heatStops(meta, scheme, profile).flat()],
+    NO_DATA[scheme],
   ] as ExpressionSpecification;
 }
 

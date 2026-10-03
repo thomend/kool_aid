@@ -1,7 +1,6 @@
 import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { costStops } from "../map/style";
-import { formatLength } from "../format";
+import { HEAT_RATIOS, heatStops } from "../map/style";
 import { PROFILES, heatFactor, type HeatProfile } from "../profiles";
 import { CaneIcon, InfoIcon, RunIcon, WalkIcon } from "./Icons";
 
@@ -41,7 +40,7 @@ export function Panel({ meta, scheme, profile, onProfileChange, infoOpen, onTogg
         </button>
       </header>
       <ProfilePicker profile={profile} onChange={onProfileChange} />
-      <CostLegend meta={meta} scheme={scheme} />
+      <HeatLegend meta={meta} scheme={scheme} profile={profile} />
     </aside>
   );
 }
@@ -83,20 +82,24 @@ function ProfilePicker({
   );
 }
 
-function CostLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
-  const stops = costStops(meta, scheme);
+function HeatLegend({ meta, scheme, profile }: { meta: GraphMeta; scheme: Scheme; profile: HeatProfile }) {
+  const stops = heatStops(meta, scheme, profile);
   const gradient = `linear-gradient(90deg, ${stops.map(([, c]) => c).join(", ")})`;
+  const median = meta.heat_factor_median[profile];
   return (
-    <div className="legend">
-      <div className="ramp" style={{ background: gradient }} />
-      <div className="ramp-labels">
-        {stops.map(([v], i) => (
-          <span key={i}>
-            {formatLength(v)}
-            {i === stops.length - 1 ? "+" : ""}
-          </span>
-        ))}
+    <section className="panel-section">
+      <h2>Heat cost per metre</h2>
+      <div className="legend">
+        <div className="ramp" style={{ background: gradient }} />
+        <div className="ramp-labels">
+          {HEAT_RATIOS.map((r) => (
+            <span key={r}>{r === 1 ? "typical" : `${r > 1 ? "+" : "−"}${Math.round(Math.abs(r - 1) * 100)} %`}</span>
+          ))}
+        </div>
+        <p className="subtle small">
+          Compared with a typical metre of Basel, which costs {median.toFixed(1)}× its length.
+        </p>
       </div>
-    </div>
+    </section>
   );
 }

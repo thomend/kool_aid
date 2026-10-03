@@ -38,6 +38,13 @@ def heat_excess_sq(pet_c):
     return np.maximum(np.asarray(pet_c, dtype=float) - PET_THRESHOLD_C, 0.0) ** 2
 
 
+def median_heat_factor(factor, length_m):
+    """Length-weighted median heat factor: what a typical metre of the network costs."""
+    order = np.argsort(factor)
+    cumulative = np.cumsum(np.asarray(length_m, dtype=float)[order])
+    return float(np.asarray(factor)[order][np.searchsorted(cumulative, cumulative[-1] / 2)])
+
+
 def heat_factor(heat_excess_sq_mean, scale_c):
     """Cost multiplier per metre of an edge, from its mean squared excess."""
     return 1 + np.asarray(heat_excess_sq_mean, dtype=float) / scale_c**2

@@ -43,6 +43,9 @@ class GraphMeta(BaseModel):
     # p10..p90 of the default profile's walk cost; one scale for all profiles
     # so switching profiles visibly changes the colours
     walk_cost_quantiles_m: dict[str, float]
+    # length-weighted median heat factor per profile (layout_meta), the
+    # reference the heat colour scale and the cost-space layout are relative to
+    heat_factor_median: dict[str, float]
     highway_counts: dict[str, int]
     node_type_counts: dict[str, int]
 
@@ -60,6 +63,8 @@ class EdgeSummary(BaseModel):
     pet_mean_c: float | None  # PET at 14:00 today, length-weighted mean, degrees C
     # length_m inflated for heat stress, per profile; see scripts/cost_model.py
     walk_cost_m: dict[str, float]
+    # walk_cost_m / length_m per profile; None outside the main component (no cost)
+    heat_factor: dict[str, float] | None
 
 
 class NodeDetail(BaseModel):
@@ -89,6 +94,7 @@ class _Store:
                 LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
             """, params=[DEFAULT_PROFILE]).fetchall()
             costs = con.sql("SELECT profile, edge_id, cost_m FROM edge_cost").fetchall()
+            medians = dict(con.sql("SELECT profile, heat_factor_median FROM layout_meta").fetchall())
         except duckdb.CatalogException:
             # edge_cost not built yet (run scripts/build_layout.py): fall back to length.
             edges = con.sql("""
@@ -97,11 +103,12 @@ class _Store:
                 FROM edges
             """).fetchall()
             costs = []
+            medians = {}
         finally:
             con.close()
 
         cost_of = {(p, e): c for p, e, c in costs}
-        edge_fields = [f for f in EdgeSummary.model_fields if f != "walk_cost_m"]
+        edge_fields = [f for f in EdgeSummary.model_fields if f not in ("walk_cost_m", "heat_factor")]
         self.nodes = {
             n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n))
             for n in nodes
@@ -115,6 +122,14 @@ class _Store:
             edge["walk_cost_m"] = {
                 p: round(cost_of.get((p, edge["id"]), edge["length_m"]), 1) for p in PROFILES
             }
+            edge["heat_factor"] = (
+                {
+                    p: round(cost_of[(p, edge["id"])] / max(edge["length_m"], 1e-6), 3)
+                    for p in PROFILES
+                }
+                if (DEFAULT_PROFILE, edge["id"]) in cost_of
+                else None
+            )
             edge = EdgeSummary(**edge).model_dump()
             edge["length_m"] = round(edge["length_m"], 1)
             if edge["pet_mean_c"] is not None:
@@ -131,8 +146,9 @@ class _Store:
                     "geometry": {"type": "LineString", "coordinates": coords.tolist()},
                     # flat properties: MapLibre expressions can't read nested objects
                     "properties": {
-                        **{k: v for k, v in edge.items() if k != "walk_cost_m"},
+                        **{k: v for k, v in edge.items() if k not in ("walk_cost_m", "heat_factor")},
                         **{f"walk_cost_m_{p}": c for p, c in edge["walk_cost_m"].items()},
+                        **{f"heat_factor_{p}": f for p, f in (edge["heat_factor"] or {}).items()},
                     },
                 }
             )
@@ -167,6 +183,7 @@ class _Store:
             bounds=Bounds(west=min(lons), south=min(lats), east=max(lons), north=max(lats)),
             length_quantiles_m=quantiles,
             walk_cost_quantiles_m=cost_quantiles,
+            heat_factor_median={p: round(medians.get(p, 1.0), 3) for p in PROFILES},
             highway_counts=_count(e["highway"] for e in self.edges.values()),
             node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
         )

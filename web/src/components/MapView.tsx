@@ -11,7 +11,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { buildStyle, categoryOf } from "../map/style";
-import { formatLength } from "../format";
+import { formatHeatRatio, formatLength } from "../format";
 import type { HeatProfile } from "../profiles";
 
 setWorkerUrl(workerUrl);
@@ -45,13 +45,23 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
+// Tooltip line for an edge feature's (flat) properties
+function edgeDetail(p: Record<string, any>, profile: HeatProfile, meta: GraphMeta): string {
+  const factor: number | undefined = p[`heat_factor_${profile}`];
+  return [
+    `${formatLength(p[`walk_cost_m_${profile}`])} cost`,
+    ...(factor === undefined ? [] : [formatHeatRatio(factor, meta.heat_factor_median[profile])]),
+    p.highway.replace("_", " "),
+  ].join(" · ");
+}
+
 export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onGraphLoaded }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded, profile });
-  handlers.current = { onSelect, onGraphLoaded, profile };
+  const handlers = useRef({ onSelect, onGraphLoaded, profile, meta });
+  handlers.current = { onSelect, onGraphLoaded, profile, meta };
 
   // Create the map once
   useEffect(() => {
@@ -117,11 +127,7 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: [
-                `${formatLength(p[`walk_cost_m_${handlers.current.profile}`])} cost`,
-                formatLength(p.length_m),
-                p.highway.replace("_", " "),
-              ].join(" · "),
+              detail: edgeDetail(p, handlers.current.profile, handlers.current.meta),
             }
           : {
               x: e.point.x,

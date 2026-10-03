@@ -17,8 +17,10 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
       </button>
       <h3>About this map</h3>
       <p className="small">
-        Edges are coloured by walking cost: their length stretched by heat stress (PET), so hot,
-        shadeless streets cost more to walk than cool, comfortable ones.
+        Walking cost is length stretched by heat stress (PET), so hot, shadeless streets cost
+        more to walk than cool, comfortable ones. Edges are coloured by heat cost per metre
+        compared with a typical metre of Basel: red streets are hotter than typical, teal ones
+        cooler.
       </p>
       <p className="small">
         Heat only counts above 29 °C PET, where moderate heat stress begins, and then grows
@@ -44,8 +46,10 @@ function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
     <>
       <p className="section-label">Cost space</p>
       <p className="small">
-        Every edge is drawn as long as its cost, and nodes are gently pulled toward their real
-        location. Expensive edges push the city apart, cheap ones pull it back together.
+        Every edge is drawn as long as its cost relative to the city: hotter-than-typical streets
+        stretch, cooler ones shrink, and the city as a whole keeps its size. The grid is warped
+        along with the network, so stretched cells mark heat-stressed areas and squeezed cells
+        cool ones.
       </p>
       <dl className="mini-stats">
         <div>

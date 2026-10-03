@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api/layout", tags=["layout"])
 TO_LV95 = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True)
 DECIMALS = 1  # 0.1 m
 IDW_NEIGHBOURS = 8
+GRID_SPACING_M = 250  # background grid warped along with the network
+GRID_STEP_M = 50  # vertex spacing along grid lines
+GRID_REACH_M = 200  # grid is only drawn this close to the network
 
 
 class _Store:
@@ -124,6 +127,11 @@ def _build(con, profile):
             }
         )
 
+    grid = [
+        {"geo": _flat(line, origin), "cost": _flat(line + shift(line), origin)}
+        for line in _grid_lines(geo_xy)
+    ]
+
     all_pts = np.vstack([geo_xy, cost_xy]) - origin
     return {
         "meta": {
@@ -153,12 +161,57 @@ def _build(con, profile):
             "length_m": edges["length_m"].round(1).tolist(),
             "pet_mean_c": _nullable_floats(edges["pet_mean_c"]),
             "walk_cost_m": edges["walk_cost_m"].round(1).tolist(),
+            "heat_factor": (
+                edges["walk_cost_m"] / np.maximum(edges["length_m"], 1e-6)
+            ).round(3).tolist(),
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
         },
-        "context": {"lines": context_lines, "labels": context_labels},
+        "context": {"lines": context_lines, "labels": context_labels, "grid": grid},
     }
+
+
+def _grid_lines(nodes_xy):
+    """A regular grid over the network, as polylines cut where they leave it.
+
+    Lines run on GRID_SPACING_M multiples (LV95), with a vertex every
+    GRID_STEP_M so they can bend when displaced into cost space.
+    """
+    # cells of GRID_STEP_M with a node, grown by GRID_REACH_M: "near the network"
+    cell = np.floor(nodes_xy / GRID_STEP_M).astype(int)
+    reach = GRID_REACH_M // GRID_STEP_M
+    c0 = cell.min(axis=0) - reach
+    occupied = np.zeros(tuple(cell.max(axis=0) - c0 + reach + 1), bool)
+    occupied[tuple((cell - c0).T)] = True
+    near_mask = np.zeros_like(occupied)
+    for dx in range(-reach, reach + 1):
+        for dy in range(-reach, reach + 1):
+            if dx * dx + dy * dy <= reach * reach:
+                near_mask |= np.roll(occupied, (dx, dy), axis=(0, 1))
+
+    def is_near(pts):
+        c = np.floor(pts / GRID_STEP_M).astype(int) - c0
+        inside = ((c >= 0) & (c < near_mask.shape)).all(axis=1)
+        out = np.zeros(len(pts), bool)
+        out[inside] = near_mask[tuple(c[inside].T)]
+        return out
+
+    lo = np.floor(nodes_xy.min(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
+    hi = np.ceil(nodes_xy.max(axis=0) / GRID_SPACING_M) * GRID_SPACING_M
+    lines = []
+    for axis in (0, 1):
+        along = np.arange(lo[1 - axis], hi[1 - axis] + GRID_STEP_M, GRID_STEP_M)
+        for at in np.arange(lo[axis], hi[axis] + GRID_SPACING_M, GRID_SPACING_M):
+            pts = np.empty((len(along), 2))
+            pts[:, axis], pts[:, 1 - axis] = at, along
+            near = is_near(pts)
+            # split into runs of consecutive points near the network
+            edges = np.flatnonzero(np.diff(np.r_[0, near.astype(int), 0]))
+            for start, stop in zip(edges[::2], edges[1::2]):
+                if stop - start >= 2:
+                    lines.append(pts[start:stop])
+    return lines
 
 
 def _nullable_floats(column):

@@ -11,7 +11,7 @@ import type { Scheme } from "../map/basemap";
 import { ACCENT, categoryOf } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
-import { formatHighway, formatLength, formatPet } from "../format";
+import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
 
 export interface CostSpaceHandle {
@@ -57,8 +57,22 @@ const CONTROLLER = {
 };
 
 const PALETTE = {
-  light: { water: "#a9d2f3", label: "#6e6e73", halo: "#f4f2ee", surface: "#ffffff", stroke: "#3a3a3c" },
-  dark: { water: "#22384f", label: "#8e8e93", halo: "#1b1c1f", surface: "#2c2c2e", stroke: "#d1d1d6" },
+  light: {
+    water: "#a9d2f3",
+    label: "#6e6e73",
+    halo: "#f4f2ee",
+    surface: "#ffffff",
+    stroke: "#3a3a3c",
+    grid: [60, 60, 67, 46],
+  },
+  dark: {
+    water: "#22384f",
+    label: "#8e8e93",
+    halo: "#1b1c1f",
+    surface: "#2c2c2e",
+    stroke: "#d1d1d6",
+    grid: [235, 235, 245, 40],
+  },
 } as const;
 
 const RIVER_WIDTH_M: Record<string, number> = { Rhein: 190, Wiese: 25, Birs: 30, Birsig: 8 };
@@ -101,6 +115,7 @@ function prepareData(data: CostSpaceData) {
     edgeIndex,
     rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
     labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
+    grid: data.context.grid.map((l) => prepare(l.geo, l.cost)),
   };
 }
 
@@ -119,6 +134,7 @@ function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
     allNodes: mix(from.allNodes, to.allNodes),
     rivers: to.rivers.map((r, i) => mix(from.rivers[i], r)),
     labels: to.labels.map((l, i) => mix(from.labels[i], l)),
+    grid: to.grid.map((l, i) => mix(from.grid[i], l)),
   };
 }
 
@@ -128,7 +144,9 @@ function sameShape(a: Prepared, b: Prepared) {
     a.allNodes.delta.length === b.allNodes.delta.length &&
     a.nodes.delta.length === b.nodes.delta.length &&
     a.rivers.length === b.rivers.length &&
-    a.labels.length === b.labels.length
+    a.labels.length === b.labels.length &&
+    a.grid.length === b.grid.length &&
+    a.grid.every((l, i) => l.delta.length === b.grid[i].delta.length)
   );
 }
 
@@ -266,10 +284,12 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const palette = PALETTE[scheme];
   const accent = hexToRgba(ACCENT[scheme]);
 
+  const profile = data.meta.profile;
+  const median = meta.heat_factor_median[profile];
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(meta, scheme);
-    return Array.from(data.edges.walk_cost_m, (c) => color(c));
-  }, [data, meta, scheme]);
+    const color = edgeColorFn(meta, scheme, profile);
+    return Array.from(data.edges.heat_factor, (f) => color(f));
+  }, [data, meta, scheme, profile]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -286,6 +306,18 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const selectedNode = selection?.kind === "node" ? positionOfNode(selection.id) : null;
 
   const layers = [
+    // Regular grid, warped like the network: stretched cells are hotter than
+    // typical, squeezed cells cooler
+    new PathLayer({
+      id: "grid",
+      data: prepared.grid.map((l) => lerp(l.geo, l.delta, t, new Float32Array(l.geo.length))),
+      getPath: (d) => d,
+      positionFormat: "XY",
+      getColor: palette.grid as unknown as [number, number, number, number],
+      getWidth: 1,
+      widthUnits: "pixels",
+      updateTriggers: { getColor: scheme },
+    }),
     new PathLayer({
       id: "rivers",
       data: prepared.rivers.map((r) => ({
@@ -414,6 +446,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
         detail: [
           formatLength(data.edges.walk_cost_m[i]) + " cost",
+          formatHeatRatio(data.edges.heat_factor[i], median),
           formatHighway(data.edges.highway[i]).toLowerCase(),
           ...(pet ? [pet] : []),
         ].join(" · "),
@@ -529,9 +562,9 @@ function ScaleBar({ zoom }: { zoom: number }) {
   const candidates = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   const metres = candidates.find((m) => m * pxPerMetre >= 70) ?? 5000;
   return (
-    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)} of walking cost`}>
+    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)} of walking at typical heat`}>
       <span className="scale-line" style={{ width: metres * pxPerMetre }} />
-      <span>{formatLength(metres)} of cost</span>
+      <span>{formatLength(metres)} at typical heat</span>
     </div>
   );
 }

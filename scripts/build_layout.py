@@ -1,7 +1,9 @@
 """Compute the cost-space layout of the walkable graph.
 
 Treats the main component as an elastic network: every edge is a spring whose
-rest length is its walking cost, and every node is gently pulled toward its
+rest length is its walking cost relative to the city (cost divided by the
+length-weighted median heat factor, so the city as a whole keeps its size:
+hotter-than-typical streets stretch, cooler ones shrink), and every node is gently pulled toward its
 geographic position so the city stays recognisable. Minimises
 
     sum over edges   w_ij (|p_i - p_j| - c_ij)^2       edge length on screen = cost
@@ -36,7 +38,7 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-from cost_model import PROFILES, heat_factor
+from cost_model import PROFILES, heat_factor, median_heat_factor
 
 
 def edge_cost(length_m, heat_excess_sq_mean, scale_c):
@@ -178,6 +180,7 @@ def main():
             profile VARCHAR PRIMARY KEY,  -- heat-sensitivity profile, see cost_model.py
             built_at TIMESTAMP,
             cost VARCHAR,                 -- what edge_cost() is based on
+            heat_factor_median DOUBLE,    -- layout edge length = cost / this
             alpha DOUBLE,
             iterations INTEGER,
             edge_stretch_median DOUBLE,   -- on-screen edge length / cost (1 = exact)
@@ -200,7 +203,8 @@ def main():
 
     for profile, scale in PROFILES.items():
         started = time.time()
-        a, b, cost = unique_edges(src, dst, edge_cost(length, heat, scale))
+        median = median_heat_factor(heat_factor(all_heat, scale), all_edges["length_m"])
+        a, b, cost = unique_edges(src, dst, edge_cost(length, heat, scale) / median)
         pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
 
         stretch = np.linalg.norm(pos[a] - pos[b], axis=1) / np.maximum(cost, 1e-6)
@@ -220,10 +224,11 @@ def main():
             [profile, node_ids.tolist(), pos[:, 0].tolist(), pos[:, 1].tolist()],
         )
         con.execute(
-            "INSERT INTO layout_meta VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO layout_meta VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 profile,
                 f"length_m * (1 + (max(PET - 29 C, 0) / {scale:g} C)^2), mean along the edge",
+                median,
                 args.alpha,
                 iterations,
                 *quality.values(),
@@ -241,7 +246,7 @@ def main():
         )
 
         print(
-            f"[{profile}] Laid out {len(node_ids)} nodes in {time.time() - started:.1f}s "
+            f"[{profile}] Median heat factor {median:.2f}. Laid out {len(node_ids)} nodes in {time.time() - started:.1f}s "
             f"({iterations} iterations). Edge stretch median {quality['edge_stretch_median']:.3f} "
             f"(p5 {quality['edge_stretch_p05']:.3f}, p95 {quality['edge_stretch_p95']:.3f}); "
             f"displacement median {quality['displacement_median_m']:.0f} m, "

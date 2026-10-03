@@ -17,6 +17,8 @@ export interface GraphMeta {
   bounds: Bounds;
   length_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
   walk_cost_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
+  /** Length-weighted median heat factor per profile: what a typical metre costs. */
+  heat_factor_median: Record<HeatProfile, number>;
   highway_counts: Record<string, number>;
   node_type_counts: Record<string, number>;
 }
@@ -37,6 +39,8 @@ export interface EdgeSummary {
   pet_mean_c: number | null;
   /** Walking cost in metres per heat profile: length_m inflated for heat stress, see scripts/cost_model.py. */
   walk_cost_m: Record<HeatProfile, number>;
+  /** walk_cost_m / length_m per profile; null outside the main network. */
+  heat_factor: Record<HeatProfile, number> | null;
 }
 
 export interface NodeDetail {
@@ -71,6 +75,8 @@ export interface LayoutMeta {
   profile: HeatProfile;
   built_at: string;
   cost: string;
+  /** Edges are laid out at cost / this, so the city as a whole keeps its size. */
+  heat_factor_median: number;
   alpha: number;
   iterations: number;
   edge_stretch_median: number;
@@ -103,6 +109,7 @@ export interface CostSpaceData {
     length_m: number[];
     pet_mean_c: (number | null)[];
     walk_cost_m: number[];
+    heat_factor: number[];
     start_indices: number[];
     geo: number[];
     cost: number[];
@@ -110,6 +117,8 @@ export interface CostSpaceData {
   context: {
     lines: { name: string; geo: number[]; cost: number[] }[];
     labels: { name: string; kind: string; geo: number[]; cost: number[] }[];
+    /** Regular 250 m grid, warped along with the network. */
+    grid: { geo: number[]; cost: number[] }[];
   };
 }
 

@@ -6,8 +6,8 @@ An interactive map of Basel's **walkable network** as a graph: intersections are
 
 The web app has two views:
 
-- **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by cost or by path type (footpath, pedestrian zone, steps, street). Click any node or edge to inspect it.
-- **Cost space**: the same graph redrawn so that each edge's on-screen length equals its cost, while staying close to its real location. Switching views animates the city between the two layouts, and a slider lets you stop anywhere in between.
+- **Geographic**: the graph on a calm, abstract map of Basel. Edges are coloured by heat cost per metre relative to a typical metre of Basel (teal = cooler, red = hotter). Click any node or edge to inspect it.
+- **Cost space**: the same graph redrawn so that each edge's on-screen length equals its cost relative to the city median, while staying close to its real location; a warped background grid shows which areas swell (hot) or shrink (cool). Switching views animates the city between the two layouts, and a slider lets you stop anywhere in between.
 
 Data comes from OpenStreetMap, is stored in DuckDB, and is served to a React frontend by a FastAPI backend.
 

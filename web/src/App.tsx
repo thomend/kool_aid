@@ -309,8 +309,14 @@ export default function App() {
         </button>
       </div>
 
-      {selection && (
-        <Inspector selection={selection} profile={profile} onSelect={select} onNodeLoaded={onNodeLoaded} />
+      {meta && selection && (
+        <Inspector
+          selection={selection}
+          meta={meta}
+          profile={profile}
+          onSelect={select}
+          onNodeLoaded={onNodeLoaded}
+        />
       )}
 
       {costVisible && view === "cost-space" && (

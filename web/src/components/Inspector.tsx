@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
+import { fetchEdge, fetchNode, type EdgeSummary, type GraphMeta, type NodeDetail } from "../api";
 import { categoryOf } from "../map/style";
-import { formatHighway, formatLength, formatPet } from "../format";
+import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
 import type { HeatProfile } from "../profiles";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
 
 interface Props {
   selection: NonNullable<Selection>;
+  meta: GraphMeta;
   profile: HeatProfile;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
@@ -18,7 +19,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, profile, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, meta, profile, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -54,7 +55,7 @@ export function Inspector({ selection, profile, onSelect, onNodeLoaded }: Props)
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} profile={profile} onSelect={onSelect} />
+        <EdgeCard edge={current.data} median={meta.heat_factor_median[profile]} profile={profile} onSelect={onSelect} />
       ) : (
         <NodeCard node={current.data} onSelect={onSelect} />
       )}
@@ -68,10 +69,12 @@ function Chip({ highway }: { highway: string }) {
 
 function EdgeCard({
   edge,
+  median,
   profile,
   onSelect,
 }: {
   edge: EdgeSummary;
+  median: number;
   profile: HeatProfile;
   onSelect: Props["onSelect"];
 }) {
@@ -90,6 +93,7 @@ function EdgeCard({
       <p className="subtle small">
         {formatLength(edge.length_m)} long
         {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
+        {edge.heat_factor ? ` · ${formatHeatRatio(edge.heat_factor[profile], median)}` : ""}
       </p>
       <ul className="list">
         {(
