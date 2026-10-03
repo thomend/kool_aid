@@ -9,7 +9,6 @@ import {
 import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { GraphMeta } from "../api";
-import type { EdgeCosts } from "../cost";
 import type { Scheme } from "../map/basemap";
 import { buildStyle, categoryOf, type ColorMode } from "../map/style";
 import { formatLength } from "../format";
@@ -20,7 +19,6 @@ export type Selection = { kind: "node" | "edge"; id: number } | null;
 
 interface Props {
   meta: GraphMeta;
-  costs: EdgeCosts;
   scheme: Scheme;
   mode: ColorMode;
   selection: Selection;
@@ -46,14 +44,13 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
-export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap, onGraphLoaded }: Props) {
+export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGraphLoaded }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded, costs });
-  handlers.current = { onSelect, onGraphLoaded, costs };
-  const [edgesLoaded, setEdgesLoaded] = useState(false);
+  const handlers = useRef({ onSelect, onGraphLoaded });
+  handlers.current = { onSelect, onGraphLoaded };
 
   // Create the map once
   useEffect(() => {
@@ -61,7 +58,7 @@ export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap,
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, mode),
+      style: buildStyle(scheme, mode, meta),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -119,7 +116,7 @@ export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap,
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: edgeDetail(handlers.current.costs, Number(f.id), p.highway),
+              detail: `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`,
             }
           : {
               x: e.point.x,
@@ -141,10 +138,7 @@ export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap,
       );
     });
     map.on("sourcedata", (e) => {
-      if (e.sourceId === SOURCE.edge && e.isSourceLoaded) {
-        setEdgesLoaded(true);
-        handlers.current.onGraphLoaded();
-      }
+      if (e.sourceId === SOURCE.edge && e.isSourceLoaded) handlers.current.onGraphLoaded();
     });
 
     return () => {
@@ -153,32 +147,15 @@ export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap,
     };
   }, []);
 
-  // Push the live costs to the map as feature-state "cost" (total) and "perM"
-  const pushCosts = () => {
-    const map = mapRef.current;
-    const c = handlers.current.costs;
-    if (!map?.getSource(SOURCE.edge)) return;
-    for (let i = 0; i < c.ids.length; i++) {
-      map.setFeatureState({ source: SOURCE.edge, id: c.ids[i] }, { cost: c.values[i], perM: c.perMetre[i] });
-    }
-  };
-
-  useEffect(() => {
-    if (edgesLoaded) pushCosts();
-  }, [costs, edgesLoaded]);
-
-  // Restyle on theme / colour mode change (MapLibre diffs the styles), then
-  // push the costs again in case the edge source was rebuilt and lost them.
+  // Restyle on theme / colour mode change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
   const styleKey = useRef(`${scheme}|${mode}`);
   useEffect(() => {
     const key = `${scheme}|${mode}`;
-    const map = mapRef.current;
-    if (!map || key === styleKey.current) return;
+    if (key === styleKey.current) return;
     styleKey.current = key;
-    map.setStyle(buildStyle(scheme, mode));
-    map.once("idle", pushCosts);
-  }, [scheme, mode]);
+    mapRef.current?.setStyle(buildStyle(scheme, mode, meta));
+  }, [scheme, mode, meta]);
 
   // Reflect the selection as feature-state
   useEffect(() => {
@@ -204,16 +181,4 @@ export function MapView({ meta, costs, scheme, mode, selection, onSelect, onMap,
       )}
     </div>
   );
-}
-
-/** Tooltip line for an edge: cost, length, active factor values, path type. */
-export function edgeDetail(costs: EdgeCosts, edgeId: number, highway: string): string {
-  const type = highway.replace(/_/g, " ");
-  const b = costs.breakdown(edgeId);
-  if (!b) return type;
-  if (costs.isLength) return `${formatLength(b.length)} · ${type}`;
-  const factors = b.parts
-    .filter((p) => p.value !== null)
-    .map((p) => `${p.factor.label} ${Math.round(p.value!)}${p.factor.key === "heat" ? " °C" : ""}`);
-  return [`Cost ${formatLength(b.cost)}`, `${formatLength(b.length)} long`, ...factors, type].join(" · ");
 }

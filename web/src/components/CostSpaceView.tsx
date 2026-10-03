@@ -1,21 +1,18 @@
 // The cost-space view: the graph laid out so that on-screen edge length equals
-// cost, drawn with deck.gl on a plain canvas in metres. Node positions come
-// live from the layout worker (costLayout.ts); `t` morphs every vertex between
-// its geographic (0) and cost-space (1) position.
+// cost, drawn with deck.gl on a plain canvas in metres. `t` morphs every vertex
+// between its geographic (0) and cost-space (1) position.
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
 import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl/core";
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
-import type { CostSpaceData } from "../api";
-import type { EdgeCosts } from "../cost";
-import { buildGeometry, costPositions } from "../costLayout";
+import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { ACCENT, categoryOf, type ColorMode } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
-import { formatLength } from "../format";
-import { edgeDetail, type Selection } from "./MapView";
+import { formatHighway, formatLength, formatPet } from "../format";
+import type { Selection } from "./MapView";
 
 export interface CostSpaceHandle {
   zoomIn(): void;
@@ -30,11 +27,7 @@ export interface CostSpaceHandle {
 
 interface Props {
   data: CostSpaceData;
-  costs: EdgeCosts;
-  /** Cost-space node positions, aligned with data.nodes (live layout). */
-  positions: Float64Array;
-  /** Layout length = cost × costScale, for the scale bar. */
-  costScale: number;
+  meta: GraphMeta;
   scheme: Scheme;
   mode: ColorMode;
   t: number;
@@ -71,15 +64,20 @@ const PALETTE = {
 
 const RIVER_WIDTH_M: Record<string, number> = { Rhein: 190, Wiese: 25, Birs: 30, Birsig: 8 };
 
-/** geo + t · (cost − geo), element-wise */
-function lerp(geo: ArrayLike<number>, cost: ArrayLike<number>, t: number) {
-  const out = new Float32Array(geo.length);
-  for (let i = 0; i < geo.length; i++) out[i] = geo[i] + (cost[i] - geo[i]) * t;
+function lerp(geo: Float32Array, delta: Float32Array, t: number, out: Float32Array) {
+  for (let i = 0; i < geo.length; i++) out[i] = geo[i] + delta[i] * t;
   return out;
 }
 
+function prepare(geo: number[], cost: number[]) {
+  const g = Float32Array.from(geo);
+  const d = new Float32Array(g.length);
+  for (let i = 0; i < g.length; i++) d[i] = cost[i] - g[i];
+  return { geo: g, delta: d };
+}
+
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, costs, positions, costScale, scheme, mode, t, selection, onSelect },
+  { data, meta, scheme, mode, t, selection, onSelect },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -91,37 +89,48 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   );
 
   // ---------- static per-dataset arrays ----------
-  const geometry = useMemo(() => buildGeometry(data), [data]);
   const prepared = useMemo(() => {
+    const e = data.edges;
     const visibleNodes = data.nodes.node_type
       .map((type, i) => (type === "junction" ? -1 : i))
       .filter((i) => i >= 0);
+    const nodeGeo: number[] = [];
+    const nodeCost: number[] = [];
+    for (const i of visibleNodes) {
+      nodeGeo.push(data.nodes.geo[2 * i], data.nodes.geo[2 * i + 1]);
+      nodeCost.push(data.nodes.cost[2 * i], data.nodes.cost[2 * i + 1]);
+    }
+    const nodeIndex = new Map(data.nodes.ids.map((id, i) => [id, i]));
+    const edgeIndex = new Map(e.ids.map((id, i) => [id, i]));
+    const starts = Uint32Array.from([...e.start_indices, e.geo.length / 2]);
     return {
+      edges: prepare(e.geo, e.cost),
+      starts,
+      nodes: prepare(nodeGeo, nodeCost),
+      allNodes: prepare(data.nodes.geo, data.nodes.cost),
       visibleNodes,
-      nodeIndex: new Map(data.nodes.ids.map((id, i) => [id, i])),
-      edgeIndex: new Map(data.edges.ids.map((id, i) => [id, i])),
+      nodeIndex,
+      edgeIndex,
+      rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
+      labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
     };
   }, [data]);
 
-  // ---------- cost-space positions from the live layout ----------
-  const cost = useMemo(() => costPositions(geometry, positions), [geometry, positions]);
-
   // ---------- positions at the current morph state ----------
-  const edgePositions = useMemo(() => lerp(geometry.edgeGeo, cost.edges, t), [geometry, cost, t]);
-  const nodePositions = useMemo(() => {
-    const out = new Float32Array(prepared.visibleNodes.length * 2);
-    prepared.visibleNodes.forEach((i, k) => {
-      out[2 * k] = geometry.nodeGeo[2 * i] + (cost.nodes[2 * i] - geometry.nodeGeo[2 * i]) * t;
-      out[2 * k + 1] = geometry.nodeGeo[2 * i + 1] + (cost.nodes[2 * i + 1] - geometry.nodeGeo[2 * i + 1]) * t;
-    });
-    return out;
-  }, [geometry, cost, prepared, t]);
+  const edgePositions = useMemo(
+    () => lerp(prepared.edges.geo, prepared.edges.delta, t, new Float32Array(prepared.edges.geo.length)),
+    [prepared, t],
+  );
+  const nodePositions = useMemo(
+    () => lerp(prepared.nodes.geo, prepared.nodes.delta, t, new Float32Array(prepared.nodes.geo.length)),
+    [prepared, t],
+  );
 
   const positionOfNode = (nodeId: number): [number, number] | null => {
     const i = prepared.nodeIndex.get(nodeId);
     if (i === undefined) return null;
-    const g = geometry.nodeGeo;
-    return [g[2 * i] + (cost.nodes[2 * i] - g[2 * i]) * t, g[2 * i + 1] + (cost.nodes[2 * i + 1] - g[2 * i + 1]) * t];
+    const { geo, delta } = prepared.allNodes;
+    return [geo[2 * i] + delta[2 * i] * t, geo[2 * i + 1] + delta[2 * i + 1] * t];
   };
 
   // ---------- camera ----------
@@ -174,7 +183,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
 
   // Displacement of the node closest to a local point (for focusing in cost space)
   const nearestShift = (x: number, y: number): [number, number] => {
-    const geo = geometry.nodeGeo;
+    const { geo, delta } = prepared.allNodes;
     let best = 0;
     let bestD = Infinity;
     for (let i = 0; i < geo.length; i += 2) {
@@ -184,7 +193,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         best = i;
       }
     }
-    return [cost.nodes[best] - geo[best], cost.nodes[best + 1] - geo[best + 1]];
+    return [delta[best], delta[best + 1]];
   };
 
   // ---------- styling ----------
@@ -193,12 +202,9 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const accent = hexToRgba(ACCENT[scheme]);
 
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(mode, scheme);
-    return data.edges.highway.map((h, i) => {
-      const id = data.edges.ids[i];
-      return color(h, costs.get(id) ?? data.edges.length_m[i], costs.perMetreOf(id) ?? 1);
-    });
-  }, [data, costs, mode, scheme]);
+    const color = edgeColorFn(mode, meta, scheme);
+    return data.edges.highway.map((h, i) => color(h, data.edges.walk_cost_m[i]));
+  }, [data, meta, mode, scheme]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -211,15 +217,15 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const selectedPath =
     selectedEdge === undefined
       ? null
-      : edgePositions.subarray(geometry.starts[selectedEdge] * 2, geometry.starts[selectedEdge + 1] * 2);
+      : edgePositions.subarray(prepared.starts[selectedEdge] * 2, prepared.starts[selectedEdge + 1] * 2);
   const selectedNode = selection?.kind === "node" ? positionOfNode(selection.id) : null;
 
   const layers = [
     new PathLayer({
       id: "rivers",
-      data: geometry.context.rivers.map((r, k) => ({
+      data: prepared.rivers.map((r) => ({
         name: r.name,
-        path: lerp(r.geo, cost.rivers[k], t),
+        path: lerp(r.geo, r.delta, t, new Float32Array(r.geo.length)),
       })),
       getPath: (d) => d.path,
       positionFormat: "XY",
@@ -235,7 +241,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       id: "edges",
       data: {
         length: data.edges.ids.length,
-        startIndices: geometry.starts,
+        startIndices: prepared.starts,
         attributes: { getPath: { value: edgePositions, size: 2 } },
       },
       _pathType: "open",
@@ -250,7 +256,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [mode, scheme, costs] },
+      updateTriggers: { getColor: [mode, scheme] },
     }),
     selectedPath &&
       new PathLayer({
@@ -304,13 +310,10 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
     new TextLayer({
       id: "district-labels",
       data: visibleLabels(
-        geometry.context.labels.map((l, k) => ({
+        prepared.labels.map((l) => ({
           name: l.name.toUpperCase(),
           kind: l.kind,
-          position: [
-            l.geo[0] + (cost.labels[k][0] - l.geo[0]) * t,
-            l.geo[1] + (cost.labels[k][1] - l.geo[1]) * t,
-          ] as [number, number],
+          position: [l.geo[0] + l.delta[0] * t, l.geo[1] + l.delta[1] * t] as [number, number],
         })),
         viewState.zoom,
       ),
@@ -339,11 +342,16 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
     if (!info.picked) return setHover(null);
     if (info.layer?.id === "edges") {
       const i = info.index;
+      const pet = formatPet(data.edges.pet_mean_c[i]);
       setHover({
         x: info.x,
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
-        detail: edgeDetail(costs, data.edges.ids[i], data.edges.highway[i]),
+        detail: [
+          formatLength(data.edges.walk_cost_m[i]) + " cost",
+          formatHighway(data.edges.highway[i]).toLowerCase(),
+          ...(pet ? [pet] : []),
+        ].join(" · "),
       });
     } else if (info.layer?.id === "nodes") {
       const i = prepared.visibleNodes[info.index];
@@ -418,7 +426,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
           <div className="tooltip-detail">{hover.detail}</div>
         </div>
       )}
-      <ScaleBar zoom={viewState.zoom} costScale={costScale} />
+      <ScaleBar zoom={viewState.zoom} />
     </div>
   );
 });
@@ -451,10 +459,8 @@ function visibleLabels<T extends { name: string; kind: string; position: [number
   });
 }
 
-// How many pixels one metre of cost takes: zoom gives pixels per layout metre,
-// and a metre of cost is costScale layout metres.
-function ScaleBar({ zoom, costScale }: { zoom: number; costScale: number }) {
-  const pxPerMetre = Math.pow(2, zoom) * costScale;
+function ScaleBar({ zoom }: { zoom: number }) {
+  const pxPerMetre = Math.pow(2, zoom);
   const candidates = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   const metres = candidates.find((m) => m * pxPerMetre >= 70) ?? 5000;
   return (

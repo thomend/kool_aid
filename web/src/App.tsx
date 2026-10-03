@@ -1,18 +1,6 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import {
-  fetchCostModel,
-  fetchCostSpace,
-  fetchEdgeFactors,
-  fetchMeta,
-  type CostModel,
-  type CostSpaceData,
-  type EdgeFactors,
-  type GraphMeta,
-  type NodeDetail,
-} from "./api";
-import { evaluateCosts, settingsFromFunction, type CostSettings } from "./cost";
-import { useLiveLayout } from "./costLayout";
+import { fetchCostSpace, fetchMeta, type CostSpaceData, type GraphMeta, type NodeDetail } from "./api";
 import type { Scheme } from "./map/basemap";
 import type { ColorMode } from "./map/style";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
@@ -50,9 +38,6 @@ export default function App() {
   const scheme = schemeOverride ?? systemScheme;
 
   const [meta, setMeta] = useState<GraphMeta | null>(null);
-  const [costModel, setCostModel] = useState<CostModel | null>(null);
-  const [edgeFactors, setEdgeFactors] = useState<EdgeFactors | null>(null);
-  const [costSettings, setCostSettings] = useState<CostSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
   const [mode, setMode] = useState<ColorMode>("cost");
@@ -155,30 +140,13 @@ export default function App() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    Promise.all([fetchMeta(ctrl.signal), fetchCostModel(ctrl.signal), fetchEdgeFactors(ctrl.signal)])
-      .then(([m, model, factors]) => {
-        setMeta(m);
-        setCostModel(model);
-        setEdgeFactors(factors);
-        setCostSettings(settingsFromFunction(model, model.default_function));
-      })
+    fetchMeta(ctrl.signal)
+      .then(setMeta)
       .catch((e: Error) => {
         if (e.name !== "AbortError") setError(e.message);
       });
     return () => ctrl.abort();
   }, []);
-
-  // Edge costs for the current settings, evaluated in the browser
-  const costs = useMemo(
-    () =>
-      costModel && edgeFactors && costSettings
-        ? evaluateCosts(costModel, edgeFactors, costSettings)
-        : null,
-    [costModel, edgeFactors, costSettings],
-  );
-  // Cost-space layout, recomputed live in a Web Worker when the costs change
-  const liveLayout = useLiveLayout(costData, costs);
-
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
@@ -225,33 +193,30 @@ export default function App() {
 
   return (
     <div className="app">
-      {meta && costs && (
+      {meta && (
         <div className={`view-layer ${costVisible ? "hidden" : ""}`}>
           <MapView
-            meta={meta}
-            costs={costs}
-            scheme={scheme}
-            mode={mode}
-            selection={selection}
-            onSelect={select}
-            onMap={(m) => (mapRef.current = m)}
-            onGraphLoaded={() => setGraphLoaded(true)}
+          meta={meta}
+          scheme={scheme}
+          mode={mode}
+          selection={selection}
+          onSelect={select}
+          onMap={(m) => (mapRef.current = m)}
+          onGraphLoaded={() => setGraphLoaded(true)}
           />
         </div>
       )}
 
-      {costs && costData && liveLayout.positions && (
+      {meta && costData && (
         <div className={`view-layer ${costVisible ? "" : "hidden"}`} aria-hidden={!costVisible}>
           <Suspense fallback={null}>
             <CostSpaceView
               ref={costRefCallback}
-              data={costData}
-              costs={costs}
-              positions={liveLayout.positions}
-              costScale={liveLayout.costScale}
-              scheme={scheme}
-              mode={mode}
-              t={t}
+            data={costData}
+            meta={meta}
+            scheme={scheme}
+            mode={mode}
+            t={t}
               selection={selection}
               onSelect={select}
             />
@@ -259,17 +224,13 @@ export default function App() {
         </div>
       )}
 
-      {meta && costModel && costs && costSettings && (
+      {meta && (
         <Panel
           meta={meta}
           scheme={scheme}
           mode={mode}
           onModeChange={setMode}
-          costModel={costModel}
-          costs={costs}
-          settings={costSettings}
-          onSettingsChange={setCostSettings}
-          layout={view === "cost-space" ? liveLayout : null}
+          layout={view === "cost-space" ? (costData?.meta ?? null) : null}
         />
       )}
 
@@ -311,14 +272,8 @@ export default function App() {
         </button>
       </div>
 
-      {selection && costs && (
-        <Inspector
-          selection={selection}
-          scheme={scheme}
-          costs={costs}
-          onSelect={select}
-          onNodeLoaded={onNodeLoaded}
-        />
+      {selection && (
+        <Inspector selection={selection} scheme={scheme} onSelect={select} onNodeLoaded={onNodeLoaded} />
       )}
 
       {costVisible && view === "cost-space" && (
