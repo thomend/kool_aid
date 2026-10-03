@@ -89,7 +89,9 @@ function CostLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
           </span>
         ))}
       </div>
-      <p className="subtle small">Cost is the edge length in metres for now.</p>
+      <p className="subtle small">
+        Cost is length stretched by heat stress (PET), so hot streets cost more to walk.
+      </p>
     </div>
   );
 }
@@ -123,7 +125,8 @@ function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
         location. Expensive edges push the city apart.
       </p>
       <p className="small subtle">
-        Cost is length for now, so the city keeps its shape and only winding paths straighten.
+        Cost is length stretched by heat stress (PET), so hot, shadeless streets push the city
+        apart and cool, comfortable ones pull it back together.
       </p>
       <dl className="mini-stats">
         <div>

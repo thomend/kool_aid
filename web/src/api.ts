@@ -14,6 +14,7 @@ export interface GraphMeta {
   total_length_km: number;
   bounds: Bounds;
   length_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
+  walk_cost_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
   highway_counts: Record<string, number>;
   node_type_counts: Record<string, number>;
 }
@@ -30,6 +31,10 @@ export interface EdgeSummary {
   is_pedestrian: boolean;
   length_m: number;
   component: number;
+  /** PET (physiological equivalent temperature) at 14:00, degrees C; null outside raster coverage. */
+  pet_mean_c: number | null;
+  /** Walking cost in metres: length_m inflated for heat stress, see scripts/build_layout.py. */
+  walk_cost_m: number;
 }
 
 export interface NodeDetail {
@@ -93,6 +98,8 @@ export interface CostSpaceData {
     highway: string[];
     is_pedestrian: boolean[];
     length_m: number[];
+    pet_mean_c: (number | null)[];
+    walk_cost_m: number[];
     start_indices: number[];
     geo: number[];
     cost: number[];

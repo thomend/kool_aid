@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
 import type { Scheme } from "../map/basemap";
 import { categoryOf } from "../map/style";
-import { formatHighway, formatLength } from "../format";
+import { formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
 
@@ -89,9 +89,13 @@ function EdgeCard({
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
-        {formatLength(edge.length_m)}
+        {formatLength(edge.walk_cost_m)}
         <span>cost</span>
       </div>
+      <p className="subtle small">
+        {formatLength(edge.length_m)} long
+        {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
+      </p>
       <ul className="list">
         {(
           [

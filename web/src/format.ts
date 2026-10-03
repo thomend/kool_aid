@@ -14,3 +14,7 @@ export function formatHighway(h: string): string {
   const s = h.replace(/_/g, " ");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+export function formatPet(c: number | null): string | null {
+  return c === null ? null : `${Math.round(c)}°C PET`;
+}

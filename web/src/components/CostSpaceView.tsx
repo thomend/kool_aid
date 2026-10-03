@@ -11,7 +11,7 @@ import type { Scheme } from "../map/basemap";
 import { ACCENT, categoryOf, type ColorMode } from "../map/style";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
-import { formatHighway, formatLength } from "../format";
+import { formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
 
 export interface CostSpaceHandle {
@@ -203,7 +203,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
 
   const edgeColors = useMemo(() => {
     const color = edgeColorFn(mode, meta, scheme);
-    return data.edges.highway.map((h, i) => color(h, data.edges.length_m[i]));
+    return data.edges.highway.map((h, i) => color(h, data.edges.walk_cost_m[i]));
   }, [data, meta, mode, scheme]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
@@ -342,11 +342,16 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
     if (!info.picked) return setHover(null);
     if (info.layer?.id === "edges") {
       const i = info.index;
+      const pet = formatPet(data.edges.pet_mean_c[i]);
       setHover({
         x: info.x,
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
-        detail: `${formatLength(data.edges.length_m[i])} · ${formatHighway(data.edges.highway[i]).toLowerCase()}`,
+        detail: [
+          formatLength(data.edges.walk_cost_m[i]) + " cost",
+          formatHighway(data.edges.highway[i]).toLowerCase(),
+          ...(pet ? [pet] : []),
+        ].join(" · "),
       });
     } else if (info.layer?.id === "nodes") {
       const i = prepared.visibleNodes[info.index];

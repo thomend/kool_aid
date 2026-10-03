@@ -13,16 +13,16 @@ export function hexToRgba(hex: string, alpha = 255): RGBA {
 
 export function edgeColorFn(mode: ColorMode, meta: GraphMeta, scheme: Scheme) {
   if (mode === "type") {
-    return (highway: string, _length: number) => hexToRgba(categoryOf(highway).color[scheme]);
+    return (highway: string, _cost: number) => hexToRgba(categoryOf(highway).color[scheme]);
   }
   const stops = costStops(meta, scheme).map(([v, c]) => [v, hexToRgba(c)] as const);
-  return (_highway: string, length: number): RGBA => {
-    if (length <= stops[0][0]) return stops[0][1];
+  return (_highway: string, cost: number): RGBA => {
+    if (cost <= stops[0][0]) return stops[0][1];
     for (let i = 1; i < stops.length; i++) {
       const [v1, c1] = stops[i];
-      if (length <= v1) {
+      if (cost <= v1) {
         const [v0, c0] = stops[i - 1];
-        const t = (length - v0) / (v1 - v0);
+        const t = (cost - v0) / (v1 - v0);
         return c0.map((c, k) => Math.round(c + (c1[k] - c) * t)) as RGBA;
       }
     }
