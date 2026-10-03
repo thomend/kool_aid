@@ -97,8 +97,8 @@ export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
           <h3>Cost</h3>
           <p>
             The cost of an edge is how much it takes to walk it, expressed in metres: its length,
-            stretched by heat stress. Up to {PET_THRESHOLD_C} °C PET, where moderate heat stress
-            begins, a metre costs one metre. Above that the cost grows with the square of the
+            stretched by heat stress. Up to {PET_THRESHOLD_C} °C PET (physiological equivalent
+            temperature), where moderate heat stress begins, a metre costs one metre. Above that the cost grows with the square of the
             excess, so the hottest stretches get disproportionately expensive.
           </p>
           <p className="formula mono">
