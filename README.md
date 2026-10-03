@@ -28,3 +28,15 @@ $BROWSER http://localhost:8050
 Default pages:
 - Root: http://localhost:8050/
 - OpenAPI UI: http://localhost:8050/docs
+
+
+
+# Datasets
+
+Humanbioklimatische Situation, Kanton Basel-Stadt
+
+Source: Geodaten Kanton Basel-Stadt
+License: CC BY 4.0
+https://creativecommons.org/licenses/by/4.0/
+
+The original dataset is distributed by the Kanton Basel-Stadt.
