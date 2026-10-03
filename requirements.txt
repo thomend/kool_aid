@@ -61,8 +61,6 @@ email-validator==2.3.0
     # via
     #   fastapi
     #   pydantic
-et-xmlfile==2.0.0
-    # via openpyxl
 executing==2.2.0
     # via stack-data
 fastapi==0.119.1
@@ -218,8 +216,6 @@ numpy==2.3.1
     #   pandas
     #   pyogrio
     #   shapely
-openpyxl==3.1.5
-    # via -r requirements.in
 overrides==7.7.0
     # via jupyter-server
 packaging==25.0
@@ -233,9 +229,7 @@ packaging==25.0
     #   nbconvert
     #   pyogrio
 pandas==2.3.0
-    # via
-    #   -r requirements.in
-    #   geopandas
+    # via geopandas
 pandocfilters==1.5.1
     # via nbconvert
 parso==0.8.4
@@ -275,8 +269,6 @@ pygments==2.19.2
     #   rich
 pyogrio==0.13.0
     # via geopandas
-pypandoc-binary==1.15
-    # via -r requirements.in
 pyproj==3.8.0
     # via geopandas
 python-dateutil==2.9.0.post0

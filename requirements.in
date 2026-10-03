@@ -1,9 +1,6 @@
-pandas
 geopandas
 jupyter
-openpyxl
 python-dotenv
-pypandoc_binary
 ipykernel
 fastapi[standard]
 uvicorn[standard]
