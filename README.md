@@ -15,6 +15,11 @@ Run locally:
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8050
 ```
 
+If you want to run fast API: 
+```
+fastapi run --host 0.0.0.0 --port 8050
+```
+
 Open in host browser:
 ```
 $BROWSER http://localhost:8050
