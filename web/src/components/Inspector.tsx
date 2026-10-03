@@ -1,7 +1,22 @@
 import { useEffect, useState } from "react";
-import { fetchEdge, fetchNode, type EdgeSummary, type GraphMeta, type NodeDetail } from "../api";
+import {
+  fetchEdge,
+  fetchNode,
+  type CostModel,
+  type EdgeSummary,
+  type GraphMeta,
+  type NodeDetail,
+} from "../api";
+import { heatFactor, referenceMedian, type Relief } from "../costModel";
 import { categoryOf } from "../map/style";
-import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
+import {
+  formatFountain,
+  formatHeatRatio,
+  formatHighway,
+  formatLength,
+  formatPet,
+  formatTrees,
+} from "../format";
 import type { HeatProfile } from "../profiles";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
@@ -10,6 +25,7 @@ interface Props {
   selection: NonNullable<Selection>;
   meta: GraphMeta;
   profile: HeatProfile;
+  relief: Relief;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -19,7 +35,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, meta, profile, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, meta, profile, relief, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -55,7 +71,13 @@ export function Inspector({ selection, meta, profile, onSelect, onNodeLoaded }: 
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} median={meta.heat_factor_median[profile]} profile={profile} onSelect={onSelect} />
+        <EdgeCard
+          edge={current.data}
+          model={meta.cost_model}
+          profile={profile}
+          relief={relief}
+          onSelect={onSelect}
+        />
       ) : (
         <NodeCard node={current.data} onSelect={onSelect} />
       )}
@@ -69,15 +91,21 @@ function Chip({ highway }: { highway: string }) {
 
 function EdgeCard({
   edge,
-  median,
+  model,
   profile,
+  relief,
   onSelect,
 }: {
   edge: EdgeSummary;
-  median: number;
+  model: CostModel | null;
   profile: HeatProfile;
+  relief: Relief;
   onSelect: Props["onSelect"];
 }) {
+  const factor =
+    model && edge.heat_excess_sq_mean !== null
+      ? heatFactor(model, profile, relief, edge.heat_excess_sq_mean, edge.shade_share, edge.fountain_share)
+      : null;
   return (
     <>
       <p className="eyebrow">Edge</p>
@@ -87,14 +115,20 @@ function EdgeCard({
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
-        {formatLength(edge.walk_cost_m[profile])}
+        {formatLength(edge.length_m * (factor ?? 1))}
         <span>cost</span>
       </div>
       <p className="subtle small">
         {formatLength(edge.length_m)} long
         {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
-        {edge.heat_factor ? ` · ${formatHeatRatio(edge.heat_factor[profile], median)}` : ""}
+        {model && factor !== null ? ` · ${formatHeatRatio(factor, referenceMedian(model, profile))}` : ""}
       </p>
+      {edge.shade_share !== null && edge.tree_count !== null && (
+        <p className="subtle small">{formatTrees(edge.tree_count, edge.shade_share)}</p>
+      )}
+      {edge.nearest_fountain_m !== null && (
+        <p className="subtle small">{formatFountain(edge.nearest_fountain, edge.nearest_fountain_m)}</p>
+      )}
       <ul className="list">
         {(
           [

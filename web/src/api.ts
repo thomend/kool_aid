@@ -1,5 +1,6 @@
 // Typed client for the FastAPI backend (api/graph.py).
 
+import type { Relief } from "./costModel";
 import type { HeatProfile } from "./profiles";
 
 export interface Bounds {
@@ -9,6 +10,16 @@ export interface Bounds {
   north: number;
 }
 
+/** Constants of the walking-cost formula, see costModel.ts and scripts/cost_model.py. */
+export interface CostModel {
+  pet_threshold_c: number;
+  shade_effect: number;
+  fountain_effect: number;
+  scale_c: Record<HeatProfile, number>;
+  /** Median heat factor without trees and fountains: the fixed reference for colours and layout. */
+  reference_median: Record<HeatProfile, number>;
+}
+
 export interface GraphMeta {
   node_count: number;
   edge_count: number;
@@ -16,9 +27,8 @@ export interface GraphMeta {
   total_length_km: number;
   bounds: Bounds;
   length_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
-  walk_cost_quantiles_m: Record<"p10" | "p25" | "p50" | "p75" | "p90", number>;
-  /** Length-weighted median heat factor per profile: what a typical metre costs. */
-  heat_factor_median: Record<HeatProfile, number>;
+  /** Constants of the cost formula; null until scripts/build_layout.py has run. */
+  cost_model: CostModel | null;
   highway_counts: Record<string, number>;
   node_type_counts: Record<string, number>;
 }
@@ -37,10 +47,17 @@ export interface EdgeSummary {
   component: number;
   /** PET (physiological equivalent temperature) at 14:00, degrees C; null outside raster coverage. */
   pet_mean_c: number | null;
-  /** Walking cost in metres per heat profile: length_m inflated for heat stress, see scripts/cost_model.py. */
-  walk_cost_m: Record<HeatProfile, number>;
-  /** walk_cost_m / length_m per profile; null outside the main network. */
-  heat_factor: Record<HeatProfile, number> | null;
+  /** Cost ingredient: mean squared PET excess over the threshold; null outside the main network. */
+  heat_excess_sq_mean: number | null;
+  /** Public trees within 15 m; null without tree data. */
+  tree_count: number | null;
+  /** 0..1, share of the length under a tree crown; softens the heat cost. */
+  shade_share: number | null;
+  /** Nearest public fountain (straight line); null without fountain data. */
+  nearest_fountain: string | null;
+  nearest_fountain_m: number | null;
+  /** 0..1, share of the length within 100 m of a fountain; softens the heat cost. */
+  fountain_share: number | null;
 }
 
 export interface NodeDetail {
@@ -73,9 +90,14 @@ export const fetchEdge = (id: number, signal?: AbortSignal) =>
 
 export interface LayoutMeta {
   profile: HeatProfile;
+  trees: boolean;
+  fountains: boolean;
   built_at: string;
   cost: string;
-  /** Edges are laid out at cost / this, so the city as a whole keeps its size. */
+  scale_c: number;
+  /** Edges are laid out at cost / this: the median without trees and fountains. */
+  reference_median: number;
+  /** This variant's own median heat factor. */
   heat_factor_median: number;
   alpha: number;
   iterations: number;
@@ -108,8 +130,9 @@ export interface CostSpaceData {
     is_pedestrian: boolean[];
     length_m: number[];
     pet_mean_c: (number | null)[];
-    walk_cost_m: number[];
-    heat_factor: number[];
+    heat_excess_sq_mean: number[];
+    shade_share: number[];
+    fountain_share: number[];
     start_indices: number[];
     geo: number[];
     cost: number[];
@@ -122,5 +145,8 @@ export interface CostSpaceData {
   };
 }
 
-export const fetchCostSpace = (profile: HeatProfile, signal?: AbortSignal) =>
-  getJson<CostSpaceData>(`/api/layout/cost-space?profile=${profile}`, signal);
+export const fetchCostSpace = (profile: HeatProfile, relief: Relief, signal?: AbortSignal) =>
+  getJson<CostSpaceData>(
+    `/api/layout/cost-space?profile=${profile}&trees=${relief.trees}&fountains=${relief.fountains}`,
+    signal,
+  );

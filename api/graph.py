@@ -33,6 +33,22 @@ class Bounds(BaseModel):
     north: float
 
 
+class CostModel(BaseModel):
+    """Constants of the walking-cost formula (scripts/cost_model.py), for the frontend.
+
+    cost = length_m * (1 + heat_excess_sq_mean * relief / scale_c^2), with
+    relief = (1 - shade_effect * shade_share) [trees on]
+           * (1 - fountain_effect * fountain_share) [fountains on]
+    """
+    pet_threshold_c: float
+    shade_effect: float
+    fountain_effect: float
+    scale_c: dict[str, float]  # per profile
+    # per profile: length-weighted median heat factor without trees and fountains,
+    # the fixed reference the colours and the cost-space layout are relative to
+    reference_median: dict[str, float]
+
+
 class GraphMeta(BaseModel):
     node_count: int
     edge_count: int
@@ -40,12 +56,7 @@ class GraphMeta(BaseModel):
     total_length_km: float
     bounds: Bounds
     length_quantiles_m: dict[str, float]  # p10..p90, for colour scales
-    # p10..p90 of the default profile's walk cost; one scale for all profiles
-    # so switching profiles visibly changes the colours
-    walk_cost_quantiles_m: dict[str, float]
-    # length-weighted median heat factor per profile (layout_meta), the
-    # reference the heat colour scale and the cost-space layout are relative to
-    heat_factor_median: dict[str, float]
+    cost_model: CostModel | None  # None until scripts/build_layout.py has run
     highway_counts: dict[str, int]
     node_type_counts: dict[str, int]
 
@@ -61,10 +72,19 @@ class EdgeSummary(BaseModel):
     length_m: float
     component: int
     pet_mean_c: float | None  # PET at 14:00 today, length-weighted mean, degrees C
-    # length_m inflated for heat stress, per profile; see scripts/cost_model.py
-    walk_cost_m: dict[str, float]
-    # walk_cost_m / length_m per profile; None outside the main component (no cost)
-    heat_factor: dict[str, float] | None
+    # cost ingredient (see CostModel): mean squared PET excess over the threshold;
+    # None outside the main component, which has no cost
+    heat_excess_sq_mean: float | None
+    # public trees within 15 m, and the share of the length under a tree crown
+    # (softens the heat cost); None without edge_trees, see scripts/join_trees_edges.py
+    tree_count: int | None
+    shade_share: float | None
+    # nearest public fountain (straight line) and the share of the length within
+    # 100 m of one (softens the heat cost); None without edge_fountains,
+    # see scripts/join_fountains_edges.py
+    nearest_fountain: str | None
+    nearest_fountain_m: float | None
+    fountain_share: float | None
 
 
 class NodeDetail(BaseModel):
@@ -88,27 +108,25 @@ class _Store:
                 "SELECT id, lon, lat, degree, node_type, component FROM nodes"
             ).fetchall()
             edges = con.sql("""
-                SELECT e.id, e.source, e.target, e.way_osm_id, e.street_name, e.highway,
-                       e.is_pedestrian, e.length_m, e.component, ec.pet_mean_c, e.wkt
-                FROM edges e
-                LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
-            """, params=[DEFAULT_PROFILE]).fetchall()
-            costs = con.sql("SELECT profile, edge_id, cost_m FROM edge_cost").fetchall()
-            medians = dict(con.sql("SELECT profile, heat_factor_median FROM layout_meta").fetchall())
-        except duckdb.CatalogException:
-            # edge_cost not built yet (run scripts/build_layout.py): fall back to length.
-            edges = con.sql("""
                 SELECT id, source, target, way_osm_id, street_name, highway,
-                       is_pedestrian, length_m, component, NULL AS pet_mean_c, wkt
+                       is_pedestrian, length_m, component, wkt
                 FROM edges
             """).fetchall()
-            costs = []
-            medians = {}
+            heat = _optional(con, """
+                SELECT edge_id, pet_mean_c, heat_excess_sq_mean FROM edge_heat
+            """)  # run scripts/build_layout.py
+            trees = _optional(con, """
+                SELECT edge_id, tree_count, shade_share FROM edge_trees
+            """)  # run scripts/join_trees_edges.py
+            fountains = _optional(con, """
+                SELECT ef.edge_id, f.name, ef.nearest_fountain_m, ef.fountain_share
+                FROM edge_fountains ef
+                LEFT JOIN fountains f ON f.fountain_id = ef.nearest_fountain_id
+            """)  # run scripts/join_fountains_edges.py
+            cost_model = _load_cost_model(con)
         finally:
             con.close()
 
-        cost_of = {(p, e): c for p, e, c in costs}
-        edge_fields = [f for f in EdgeSummary.model_fields if f not in ("walk_cost_m", "heat_factor")]
         self.nodes = {
             n[0]: dict(zip(("id", "lon", "lat", "degree", "node_type", "component"), n))
             for n in nodes
@@ -118,22 +136,23 @@ class _Store:
         edge_features = []
         for row in edges:
             *fields, wkt = row
-            edge = dict(zip(edge_fields, fields))
-            edge["walk_cost_m"] = {
-                p: round(cost_of.get((p, edge["id"]), edge["length_m"]), 1) for p in PROFILES
-            }
-            edge["heat_factor"] = (
-                {
-                    p: round(cost_of[(p, edge["id"])] / max(edge["length_m"], 1e-6), 3)
-                    for p in PROFILES
-                }
-                if (DEFAULT_PROFILE, edge["id"]) in cost_of
-                else None
-            )
-            edge = EdgeSummary(**edge).model_dump()
+            edge = dict(zip(
+                ("id", "source", "target", "way_osm_id", "street_name", "highway",
+                 "is_pedestrian", "length_m", "component"),
+                fields,
+            ))
+            pet, excess = heat.get(edge["id"], (None, None))
+            edge["pet_mean_c"] = _round(pet, 1)
+            edge["heat_excess_sq_mean"] = _round(excess, 2)
+            tree_count, shade = trees.get(edge["id"], (None, None))
+            edge["tree_count"] = tree_count
+            edge["shade_share"] = _round(shade, 3)
+            name, distance, share = fountains.get(edge["id"], (None, None, None))
+            edge["nearest_fountain"] = name
+            edge["nearest_fountain_m"] = _round(distance, 0)
+            edge["fountain_share"] = _round(share, 3)
             edge["length_m"] = round(edge["length_m"], 1)
-            if edge["pet_mean_c"] is not None:
-                edge["pet_mean_c"] = round(edge["pet_mean_c"], 1)
+            edge = EdgeSummary(**edge).model_dump()
             self.edges[edge["id"]] = edge
             self.node_edges[edge["source"]].append(edge["id"])
             if edge["target"] != edge["source"]:
@@ -144,12 +163,8 @@ class _Store:
                     "type": "Feature",
                     "id": edge["id"],
                     "geometry": {"type": "LineString", "coordinates": coords.tolist()},
-                    # flat properties: MapLibre expressions can't read nested objects
-                    "properties": {
-                        **{k: v for k, v in edge.items() if k not in ("walk_cost_m", "heat_factor")},
-                        **{f"walk_cost_m_{p}": c for p, c in edge["walk_cost_m"].items()},
-                        **{f"heat_factor_{p}": f for p, f in (edge["heat_factor"] or {}).items()},
-                    },
+                    # nulls left out, so MapLibre's "has" tells missing values apart
+                    "properties": {k: v for k, v in edge.items() if v is not None},
                 }
             )
 
@@ -169,10 +184,6 @@ class _Store:
         self.edges_geojson = _dump({"type": "FeatureCollection", "features": edge_features})
         self.nodes_geojson = _dump({"type": "FeatureCollection", "features": node_features})
 
-        quantiles = _quantiles([e["length_m"] for e in self.edges.values()])
-        cost_quantiles = _quantiles(
-            [e["walk_cost_m"][DEFAULT_PROFILE] for e in self.edges.values()]
-        )
         lons = [n["lon"] for n in self.nodes.values()]
         lats = [n["lat"] for n in self.nodes.values()]
         self.meta = GraphMeta(
@@ -181,12 +192,43 @@ class _Store:
             component_count=len({n["component"] for n in self.nodes.values()}),
             total_length_km=round(sum(e["length_m"] for e in self.edges.values()) / 1000, 2),
             bounds=Bounds(west=min(lons), south=min(lats), east=max(lons), north=max(lats)),
-            length_quantiles_m=quantiles,
-            walk_cost_quantiles_m=cost_quantiles,
-            heat_factor_median={p: round(medians.get(p, 1.0), 3) for p in PROFILES},
+            length_quantiles_m=_quantiles([e["length_m"] for e in self.edges.values()]),
+            cost_model=cost_model,
             highway_counts=_count(e["highway"] for e in self.edges.values()),
             node_type_counts=_count(n["node_type"] for n in self.nodes.values()),
         )
+
+
+def _optional(con, sql):
+    """{first column: (other columns)} of a query on a table that may not exist yet."""
+    try:
+        return {row[0]: row[1:] for row in con.sql(sql).fetchall()}
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return {}
+
+
+def _load_cost_model(con):
+    try:
+        threshold, shade, fountain = con.sql(
+            "SELECT pet_threshold_c, shade_effect, fountain_effect FROM cost_model"
+        ).fetchone()
+        rows = con.sql("""
+            SELECT profile, scale_c, reference_median FROM layout_meta
+            WHERE NOT trees AND NOT fountains
+        """).fetchall()
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return None
+    return CostModel(
+        pet_threshold_c=threshold,
+        shade_effect=shade,
+        fountain_effect=fountain,
+        scale_c={p: scale for p, scale, _ in rows},
+        reference_median={p: round(ref, 4) for p, _, ref in rows},
+    )
+
+
+def _round(value, digits):
+    return None if value is None else round(value, digits)
 
 
 def _quantiles(values):

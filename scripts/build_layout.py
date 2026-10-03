@@ -2,9 +2,11 @@
 
 Treats the main component as an elastic network: every edge is a spring whose
 rest length is its walking cost relative to the city (cost divided by the
-length-weighted median heat factor, so the city as a whole keeps its size:
-hotter-than-typical streets stretch, cooler ones shrink), and every node is gently pulled toward its
-geographic position so the city stays recognisable. Minimises
+reference: the length-weighted median heat factor without trees and fountains,
+so without them the city as a whole keeps its size: hotter-than-typical streets
+stretch, cooler ones shrink; with them it shrinks where they help), and every
+node is gently pulled toward its geographic position so the city stays
+recognisable. Minimises
 
     sum over edges   w_ij (|p_i - p_j| - c_ij)^2       edge length on screen = cost
   + alpha * sum over nodes  W_i |p_i - g_i|^2          stay near geography
@@ -18,14 +20,17 @@ pull them together.
 were tried too: they inflate the whole city and fling dead ends outward,
 which makes the view unreadable.)
 
-One layout is computed per heat-sensitivity profile (cost_model.PROFILES).
+One layout is computed per heat-sensitivity profile (cost_model.PROFILES) and
+per relief variant: tree shade and fountains each on or off, so users can
+toggle them and see what they change.
 
 Writes:
-  node_layout   profile, node_id, x, y     (Swiss LV95 metres, same frame as nodes.x/y)
-  layout_meta   one row of parameters and quality measures per profile
-  edge_cost     profile, edge_id, pet_mean_c, cost_m, for every main-component edge
-                (so the API can colour by, and the frontend inspect, the same
-                cost that shaped the layout, without recomputing it)
+  edge_heat     edge_id, pet_mean_c, heat_excess_sq_mean, shade_share, fountain_share
+                for every main-component edge: the ingredients of the cost, from
+                which the frontend computes it for any profile and variant
+  cost_model    one row: the constants of the formula (cost_model.py)
+  node_layout   profile, trees, fountains, node_id, x, y   (Swiss LV95 metres)
+  layout_meta   one row of parameters and quality measures per profile and variant
 
 Usage:
     python scripts/build_layout.py [--db data/basel.duckdb] [--alpha 0.02]
@@ -38,20 +43,38 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-from cost_model import PROFILES, heat_factor, median_heat_factor
+from cost_model import (
+    FOUNTAIN_EFFECT,
+    PET_THRESHOLD_C,
+    PROFILES,
+    SHADE_EFFECT,
+    heat_factor,
+    median_heat_factor,
+    relieved_heat_excess_sq,
+)
+
+# Relief variants: (tree shade counted, fountains counted)
+VARIANTS = [(False, False), (True, False), (False, True), (True, True)]
 
 
-def edge_cost(length_m, heat_excess_sq_mean, scale_c):
-    """Walking cost of an edge in metres: its length stretched by heat stress."""
-    return length_m * heat_factor(heat_excess_sq_mean, scale_c)
+def edge_factor(heat, scale_c, trees, fountains):
+    """Heat factor per edge for a profile scale and relief variant.
+
+    heat is (heat_excess_sq_mean, shade_share, fountain_share) per edge.
+    """
+    excess, shade, fountain = heat
+    return heat_factor(
+        relieved_heat_excess_sq(excess, shade * trees, fountain * fountains), scale_c
+    )
 
 
 def load_edge_heat(con, edge_ids):
-    """PET and mean squared heat excess per edge id, see cost_model.py.
+    """PET and (heat excess, shade share, fountain share) per edge id, see cost_model.py.
 
     PET is NaN where edge_stadtklima has no sample (no raster coverage). Those
     edges take the heat excess of their neighbours, spreading inward over a
-    few rounds; any left take the median.
+    few rounds; any left take the median. Shade and fountain shares are 0
+    where their tables have no row.
     """
     n = len(edge_ids)
     try:
@@ -59,7 +82,7 @@ def load_edge_heat(con, edge_ids):
             "SELECT edge_id, pet_mean_c, heat_excess_sq_mean FROM edge_stadtklima"
         ).fetchnumpy()
     except duckdb.CatalogException:
-        return np.full(n, np.nan), np.zeros(n)
+        return np.full(n, np.nan), (np.zeros(n), np.zeros(n), np.zeros(n))
     except duckdb.BinderException:
         raise SystemExit(
             "edge_stadtklima has no heat_excess_sq_mean; rerun "
@@ -74,7 +97,23 @@ def load_edge_heat(con, edge_ids):
         values[found] = np.ma.filled(heat[name].astype(float), np.nan)[rows[found]]
         return values
 
-    return column("pet_mean_c"), fill_from_neighbours(con, edge_ids, column("heat_excess_sq_mean"))
+    excess = fill_from_neighbours(con, edge_ids, column("heat_excess_sq_mean"))
+    shade = load_edge_share(con, edge_ids, "edge_trees", "shade_share", "join_trees_edges.py")
+    fountain = load_edge_share(
+        con, edge_ids, "edge_fountains", "fountain_share", "join_fountains_edges.py"
+    )
+    return column("pet_mean_c"), (excess, shade, fountain)
+
+
+def load_edge_share(con, edge_ids, table, column, script):
+    """A 0..1 share per edge id from `table`; 0 where it has no row or doesn't exist."""
+    try:
+        rows = con.sql(f"SELECT edge_id, {column} FROM {table}").fetchnumpy()
+    except (duckdb.CatalogException, duckdb.BinderException):
+        print(f"No {table}.{column} (run scripts/{script}): costs ignore it")
+        return np.zeros(len(edge_ids))
+    by_id = dict(zip(rows["edge_id"], np.ma.filled(rows[column].astype(float), 0.0)))
+    return np.array([by_id.get(e, 0.0) for e in edge_ids])
 
 
 def fill_from_neighbours(con, edge_ids, values, rounds=10):
@@ -161,97 +200,126 @@ def main():
 
     con = duckdb.connect(str(args.db))
     node_ids, geo, src, dst, length, heat = load_graph(con)
-    # Every main-component edge's cost, including self-loops (dropped from the
-    # spring layout but still walkable and worth colouring/inspecting).
+    # Every main-component edge, including self-loops (dropped from the spring
+    # layout but still walkable and worth colouring/inspecting).
     all_edges = con.sql(
         "SELECT id, length_m FROM edges WHERE component = 0 ORDER BY id"
     ).fetchnumpy()
     all_pet, all_heat = load_edge_heat(con, all_edges["id"])
-    all_pet = [None if np.isnan(v) else v for v in all_pet.tolist()]
 
+    con.execute("DROP TABLE IF EXISTS edge_cost")  # replaced by edge_heat
+    con.execute("""
+        CREATE OR REPLACE TABLE edge_heat (
+            edge_id BIGINT PRIMARY KEY,
+            pet_mean_c DOUBLE,           -- NULL where edge_stadtklima has no sample
+            heat_excess_sq_mean DOUBLE,  -- from neighbours where PET is missing
+            shade_share DOUBLE,          -- 0 without edge_trees
+            fountain_share DOUBLE        -- 0 without edge_fountains
+        )
+    """)
+    con.execute(
+        """INSERT INTO edge_heat
+           SELECT unnest($1), unnest($2), unnest($3), unnest($4), unnest($5)""",
+        [
+            all_edges["id"].tolist(),
+            [None if np.isnan(v) else v for v in all_pet.tolist()],
+            *(column.tolist() for column in all_heat),
+        ],
+    )
+    con.execute("""
+        CREATE OR REPLACE TABLE cost_model (
+            pet_threshold_c DOUBLE,  -- heat counts above this PET
+            shade_effect DOUBLE,     -- share of the heat excess full tree shade avoids
+            fountain_effect DOUBLE   -- share avoided where a fountain is within reach
+        )
+    """)
+    con.execute(
+        "INSERT INTO cost_model VALUES (?, ?, ?)",
+        [PET_THRESHOLD_C, SHADE_EFFECT, FOUNTAIN_EFFECT],
+    )
     con.execute("""
         CREATE OR REPLACE TABLE node_layout (
-            profile VARCHAR, node_id BIGINT, x DOUBLE, y DOUBLE,
-            PRIMARY KEY (profile, node_id)
+            profile VARCHAR, trees BOOLEAN, fountains BOOLEAN, node_id BIGINT, x DOUBLE, y DOUBLE,
+            PRIMARY KEY (profile, trees, fountains, node_id)
         )
     """)
     con.execute("""
         CREATE OR REPLACE TABLE layout_meta (
-            profile VARCHAR PRIMARY KEY,  -- heat-sensitivity profile, see cost_model.py
+            profile VARCHAR,              -- heat-sensitivity profile, see cost_model.py
+            trees BOOLEAN,                -- tree shade counted
+            fountains BOOLEAN,            -- fountains counted
             built_at TIMESTAMP,
-            cost VARCHAR,                 -- what edge_cost() is based on
-            heat_factor_median DOUBLE,    -- layout edge length = cost / this
+            cost VARCHAR,                 -- the cost formula
+            scale_c DOUBLE,               -- the profile's PET scale
+            reference_median DOUBLE,      -- layout edge length = cost / this (median without relief)
+            heat_factor_median DOUBLE,    -- this variant's own median, for comparison
             alpha DOUBLE,
             iterations INTEGER,
-            edge_stretch_median DOUBLE,   -- on-screen edge length / cost (1 = exact)
+            edge_stretch_median DOUBLE,   -- on-screen edge length / relative cost (1 = exact)
             edge_stretch_p05 DOUBLE,
             edge_stretch_p95 DOUBLE,
             displacement_median_m DOUBLE, -- how far nodes moved from geography
             displacement_p95_m DOUBLE,
-            displacement_max_m DOUBLE
-        )
-    """)
-    con.execute("""
-        CREATE OR REPLACE TABLE edge_cost (
-            profile VARCHAR,
-            edge_id BIGINT,
-            pet_mean_c DOUBLE,  -- NULL where edge_stadtklima has no sample
-            cost_m DOUBLE,      -- edge_cost() for this profile
-            PRIMARY KEY (profile, edge_id)
+            displacement_max_m DOUBLE,
+            PRIMARY KEY (profile, trees, fountains)
         )
     """)
 
     for profile, scale in PROFILES.items():
-        started = time.time()
-        median = median_heat_factor(heat_factor(all_heat, scale), all_edges["length_m"])
-        a, b, cost = unique_edges(src, dst, edge_cost(length, heat, scale) / median)
-        pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
+        # Fixed reference: what a typical metre costs without trees and fountains
+        reference = median_heat_factor(
+            edge_factor(all_heat, scale, False, False), all_edges["length_m"]
+        )
+        for trees, fountains in VARIANTS:
+            started = time.time()
+            median = median_heat_factor(
+                edge_factor(all_heat, scale, trees, fountains), all_edges["length_m"]
+            )
+            relative = length * edge_factor(heat, scale, trees, fountains) / reference
+            a, b, cost = unique_edges(src, dst, relative)
+            pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
 
-        stretch = np.linalg.norm(pos[a] - pos[b], axis=1) / np.maximum(cost, 1e-6)
-        displacement = np.linalg.norm(pos - geo, axis=1)
-        quality = {
-            "edge_stretch_median": float(np.median(stretch)),
-            "edge_stretch_p05": float(np.percentile(stretch, 5)),
-            "edge_stretch_p95": float(np.percentile(stretch, 95)),
-            "displacement_median_m": float(np.median(displacement)),
-            "displacement_p95_m": float(np.percentile(displacement, 95)),
-            "displacement_max_m": float(displacement.max()),
-        }
+            stretch = np.linalg.norm(pos[a] - pos[b], axis=1) / np.maximum(cost, 1e-6)
+            displacement = np.linalg.norm(pos - geo, axis=1)
+            quality = {
+                "edge_stretch_median": float(np.median(stretch)),
+                "edge_stretch_p05": float(np.percentile(stretch, 5)),
+                "edge_stretch_p95": float(np.percentile(stretch, 95)),
+                "displacement_median_m": float(np.median(displacement)),
+                "displacement_p95_m": float(np.percentile(displacement, 95)),
+                "displacement_max_m": float(displacement.max()),
+            }
 
-        con.execute(
-            """INSERT INTO node_layout
-               SELECT $1, unnest($2) AS node_id, unnest($3) AS x, unnest($4) AS y""",
-            [profile, node_ids.tolist(), pos[:, 0].tolist(), pos[:, 1].tolist()],
-        )
-        con.execute(
-            "INSERT INTO layout_meta VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                profile,
-                f"length_m * (1 + (max(PET - 29 C, 0) / {scale:g} C)^2), mean along the edge",
-                median,
-                args.alpha,
-                iterations,
-                *quality.values(),
-            ],
-        )
-        con.execute(
-            """INSERT INTO edge_cost
-               SELECT $1, unnest($2) AS edge_id, unnest($3) AS pet_mean_c, unnest($4) AS cost_m""",
-            [
-                profile,
-                all_edges["id"].tolist(),
-                all_pet,
-                edge_cost(all_edges["length_m"], all_heat, scale).tolist(),
-            ],
-        )
-
-        print(
-            f"[{profile}] Median heat factor {median:.2f}. Laid out {len(node_ids)} nodes in {time.time() - started:.1f}s "
-            f"({iterations} iterations). Edge stretch median {quality['edge_stretch_median']:.3f} "
-            f"(p5 {quality['edge_stretch_p05']:.3f}, p95 {quality['edge_stretch_p95']:.3f}); "
-            f"displacement median {quality['displacement_median_m']:.0f} m, "
-            f"p95 {quality['displacement_p95_m']:.0f} m, max {quality['displacement_max_m']:.0f} m"
-        )
+            con.execute(
+                """INSERT INTO node_layout
+                   SELECT $1, $2, $3, unnest($4) AS node_id, unnest($5) AS x, unnest($6) AS y""",
+                [profile, trees, fountains, node_ids.tolist(), pos[:, 0].tolist(), pos[:, 1].tolist()],
+            )
+            relief = (f" * (1 - {SHADE_EFFECT:g} * shade)" if trees else "") + (
+                f" * (1 - {FOUNTAIN_EFFECT:g} * fountain)" if fountains else ""
+            )
+            con.execute(
+                "INSERT INTO layout_meta VALUES (?, ?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    profile,
+                    trees,
+                    fountains,
+                    f"length_m * (1 + max(PET - {PET_THRESHOLD_C:g} C, 0)^2{relief} / {scale:g} C^2)",
+                    scale,
+                    reference,
+                    median,
+                    args.alpha,
+                    iterations,
+                    *quality.values(),
+                ],
+            )
+            print(
+                f"[{profile}, trees {'on' if trees else 'off'}, fountains {'on' if fountains else 'off'}] "
+                f"median heat factor {median:.2f} (reference {reference:.2f}); "
+                f"{time.time() - started:.1f}s ({iterations} iterations); "
+                f"displacement median {quality['displacement_median_m']:.0f} m, "
+                f"p95 {quality['displacement_p95_m']:.0f} m, max {quality['displacement_max_m']:.0f} m"
+            )
     con.close()
 
 

@@ -2,7 +2,7 @@
 
 Team Kool Aid's project for the hackamrhein challenge.
 
-An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres stretched by afternoon heat stress (PET), quadratically above 29 °C, with three heat-sensitivity profiles (low, medium, high) you can switch between in the panel; see [scripts/cost_model.py](scripts/cost_model.py). More factors (steps, slope…) are planned.
+An interactive map of Basel's **walkable network** as a graph: intersections are nodes and the path sections between them are edges, each with a cost. The cost is the length in metres stretched by afternoon heat stress (PET), quadratically above 29 °C and softened where public trees shade the way or a fountain is near, with three heat-sensitivity profiles (low, medium, high) you can switch between in the panel; see [scripts/cost_model.py](scripts/cost_model.py). More factors (steps, slope…) are planned.
 
 The web app has two views:
 
@@ -50,11 +50,15 @@ You only need this to refresh the OSM data or after changing a script. Run the s
 python scripts/fetch_paths.py     # download walkable ways from OSM       -> table paths
 python scripts/fetch_context.py   # download rivers + district names      -> context_lines, context_labels
 python scripts/build_graph.py     # cut ways into nodes and edges         -> nodes, edges, node_paths
-python scripts/build_layout.py    # compute the cost-space layout (~1 s)  -> node_layout, layout_meta
-python scripts/join_trees_edges.py  # Basel-Stadt tree cadastre + trees near each edge -> trees, edge_trees
+python scripts/join_stadtklima_edges.py  # PET heat stress along each edge     -> edge_stadtklima
+python scripts/join_trees_edges.py  # Basel-Stadt tree cadastre + tree shade per edge -> trees, edge_trees
+python scripts/join_fountains_edges.py  # Basel fountains + fountain reach per edge  -> fountains, edge_fountains
+python scripts/build_layout.py    # cost ingredients + cost-space layouts (~20 s) -> edge_heat, cost_model, node_layout, layout_meta
 ```
 
-`join_trees_edges.py` downloads the tree cadastre (data.bs.ch, dataset 100052) into the table `trees` on its first run and counts the trees within 15 m of each edge into `edge_trees`. Edge ids change with every `build_graph.py` run, so rerun it afterwards with `--replace`.
+`join_trees_edges.py` downloads the tree cadastre (data.bs.ch, dataset 100052) into the table `trees` on its first run and writes per edge the trees within 15 m and the share of its length in tree shade into `edge_trees`. Edge ids change with every `build_graph.py` run, so rerun the join scripts afterwards with `--replace`, then `build_layout.py`, which combines heat, shade and fountains into the costs. It stores the ingredients per edge (`edge_heat`) and the formula's constants (`cost_model`), so the app can compute the cost for any profile with tree shade and fountains switched on or off, and one cost-space layout per profile and switch combination. Colours and layouts are measured against a fixed reference, the median cost without trees and fountains, so switching them on visibly cools the city down.
+
+`join_fountains_edges.py` does the same for the fountains of Basel (data.bs.ch, dataset 100008): the table `fountains`, and per edge in `edge_fountains` the nearest fountain and the share of its length within 100 m of one.
 
 The two `fetch_` scripts need internet access (Overpass API, which is sometimes slow; the scripts fall back to mirror servers). The two `build_` scripts run offline.
 
@@ -71,7 +75,7 @@ curl -X POST localhost:8050/api/graph/reload
 | `GET /api/graph/meta` | Counts, bounds, value ranges |
 | `GET /api/graph/edges` · `/nodes` | The whole graph as GeoJSON |
 | `GET /api/graph/edges/{id}` · `/nodes/{id}` | Details of one edge or node |
-| `GET /api/layout/cost-space?profile=medium` | Node and edge positions on the map and in cost space for a heat profile (`low`, `medium`, `high`) |
+| `GET /api/layout/cost-space?profile=medium&trees=true&fountains=true` | Node and edge positions on the map and in cost space for a heat profile (`low`, `medium`, `high`), with or without tree shade and fountains |
 | `POST /api/graph/reload` | Reload the database after a rebuild |
 
 ## Good to know
