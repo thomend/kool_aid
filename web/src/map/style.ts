@@ -7,10 +7,11 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
+import { EDGES_URL, NODES_URL } from "../api";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 
-export type ColorMode = "cost" | "type";
+// cost: total cost of the edge · perMetre: how much each metre counts · type: path type
+export type ColorMode = "cost" | "perMetre" | "type";
 
 export interface EdgeCategory {
   key: string;
@@ -54,31 +55,43 @@ export function categoryOf(highway: string): EdgeCategory {
   );
 }
 
-// Cool → hot: short (cheap) edges are blue, long (expensive) ones pink
+// Both cost scales are fixed (not stretched to the current costs), so every
+// change of the cost settings shows: higher costs look hotter.
+// Total edge cost in metres: short/cheap (cool blue) … 250 m and more (hot pink).
+export const COST_STOPS_M = [5, 20, 50, 100, 250];
+// Cost per metre: ×1 (plain length) … ×2.25 and more.
+export const COST_PER_M_STOPS = [1, 1.5, 1.75, 2, 2.25];
 const COST_RAMP: Record<Scheme, string[]> = {
   light: ["#5ac8fa", "#007aff", "#5856d6", "#af52de", "#ff2d55"],
   dark: ["#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff375f"],
 };
 
-export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
-  const q = meta.walk_cost_quantiles_m;
-  const values = [q.p10, q.p50, q.p75, q.p90, q.p90 * 2.5];
-  // interpolate needs strictly ascending stops
-  for (let i = 1; i < values.length; i++) values[i] = Math.max(values[i], values[i - 1] + 0.1);
-  return values.map((v, i) => [v, COST_RAMP[scheme][i]]);
+export function costStops(mode: "cost" | "perMetre", scheme: Scheme): [number, string][] {
+  const stops = mode === "cost" ? COST_STOPS_M : COST_PER_M_STOPS;
+  return stops.map((v, i) => [v, COST_RAMP[scheme][i]]);
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(mode: ColorMode, meta: GraphMeta, scheme: Scheme): ExpressionSpecification {
-  if (mode === "cost") {
+// Costs are evaluated in the browser (cost.ts) and pushed to the map as
+// feature-state "cost" and "perM"; until then fall back to the precomputed
+// default cost.
+const edgeCost: ExpressionSpecification = ["coalesce", ["feature-state", "cost"], ["get", "walk_cost_m"]];
+const edgeCostPerMetre: ExpressionSpecification = [
+  "coalesce",
+  ["feature-state", "perM"],
+  ["/", ["get", "walk_cost_m"], ["max", ["get", "length_m"], 0.01]],
+];
+
+function edgeColor(mode: ColorMode, scheme: Scheme): ExpressionSpecification {
+  if (mode !== "type") {
     return [
       "interpolate",
       ["linear"],
-      ["get", "walk_cost_m"],
-      ...costStops(meta, scheme).flat(),
+      mode === "cost" ? edgeCost : edgeCostPerMetre,
+      ...costStops(mode, scheme).flat(),
     ] as ExpressionSpecification;
   }
   const match: unknown[] = ["match", ["get", "highway"]];
@@ -111,7 +124,7 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
+function graphLayers(mode: ColorMode, scheme: Scheme): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -131,7 +144,7 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(mode, meta, scheme)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(mode, scheme)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -169,9 +182,9 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
   ];
 }
 
-export function buildStyle(scheme: Scheme, mode: ColorMode, meta: GraphMeta): StyleSpecification {
+export function buildStyle(scheme: Scheme, mode: ColorMode): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(mode, meta, scheme);
+  const [glow, edges, nodes] = graphLayers(mode, scheme);
   return {
     version: 8,
     glyphs: GLYPHS,

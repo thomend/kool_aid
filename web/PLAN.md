@@ -80,7 +80,6 @@ OpenAPI docs: <http://localhost:8050/docs>.
 | GET | `/api/route?from=<node>&to=<node>` | shortest path (networkx, weight = cost) → GeoJSON + total cost |
 | GET | `/api/nearest?lon=&lat=` | snap a clicked point to the nearest node (for routing by map click) |
 | GET | `/api/search?q=` | street name search → fly to street |
-| — | `cost` column on edges | advanced cost model, replaces `length_m` as the routing weight |
 
 When the data grows beyond a few MB, switch `/edges` from GeoJSON to vector
 tiles (PMTiles via tippecanoe, or DuckDB spatial `ST_AsMVT`).
@@ -101,11 +100,76 @@ tiles (PMTiles via tippecanoe, or DuckDB spatial `ST_AsMVT`).
   distance and walking time (≈ 1.3 m/s) in a route card.
 - Clicked points are snapped to the nearest node in the main component.
 
-### Phase 3 – Cost model
-- `cost` column on edges, computed by a separate script (factors such as
-  steps, slope, surface, crossings, sidewalk presence, pedestrian zones).
-- UI colours by `cost`, with a breakdown of cost factors in the edge inspector.
-- Optional: user-tunable weights (sliders) that recompute routes live.
+### Phase 3 – Dynamic cost model
+
+Goal: users pick a predefined cost function or set their own, switch factors
+on/off, adjust weights, and (later) edit values of editable factors; both
+views follow live.
+
+#### Formula (`scripts/cost_model.py`, mirrored in `web/src/cost.ts`)
+
+```
+cost(edge) = length_m × max(0.1, Σ_k  weight_k · x_k)
+x_k        = 1                                   constant factors (distance)
+           = max(value_k − threshold_k, 0)      otherwise; missing values → 0
+```
+
+Every factor adds a multiple of the length; a factor that is off has weight 0.
+The 0.1 floor keeps costs positive (distance off on cool streets, trees later).
+
+#### Factors
+
+| Factor | Kind | Values | Variants | Default weight |
+|---|---|---|---|---|
+| distance | static, constant | x = 1 | – | 1 (every metre counts once) |
+| heat | static (read-only data) | PET at 14:00, threshold 23 °C | today / 2030, one at a time | 1/18 (41 °C ⇒ ×2) |
+| trees *(planned)* | editable | trees per edge; users change per edge or globally | – | negative |
+
+Weights are adjustable for both kinds. When trees arrive, added trees should
+also cool the edge (lower its PET), not only lower the cost directly.
+
+#### Presets (`cost_functions`)
+"Distance" (all off), "Heat today" (default), "Heat 2030".
+
+#### 3a – Cost model with heat ✅ (built)
+- `scripts/cost_model.py`: factors (with data variants), presets, `evaluate()`.
+- `scripts/build_factors.py` → `edge_factors` (edge_id, length_m, pet_c,
+  pet_2030_c), `factors`, `cost_functions`.
+- `build_layout.py` uses the default preset (identical to the previous
+  hard-coded heat cost) and rescales costs so Σ cost = Σ length for the layout
+  (stops the network from crumpling; max node shift 2.2 km → 0.27 km).
+  `edge_cost` is still written for the existing API fields.
+- API: `GET /api/cost/model`, `GET /api/cost/edge-factors`.
+- UI: one panel per factor (on/off switch, today/2030 choice, weight slider);
+  presets stay in the model but have no buttons. Colour modes: total cost
+  (fixed 5 m … 250 m+ scale), cost per metre (fixed ×1 … ×2.25+) and path
+  type. Fixed scales make every change visible (heat on = hotter; with
+  distance only, total cost shows edge length and per metre is uniform ×1). Tooltips and the inspector (cost
+  breakdown per factor) follow instantly. Cost space shows a notice while the
+  layout was computed with other settings.
+- Costs reach MapLibre as feature-state `cost` and `perM`; they are pushed again after
+  every restyle (theme / colour mode), which can rebuild the edge source.
+
+#### 3b – Live cost space ✅ (built)
+- `web/src/layout.worker.ts`: `majorize()` ported to TypeScript, same springs,
+  geographic pull (alpha from `layout_meta`) and Σ cost = Σ length rescaling.
+  Warm-started from the current positions, runs in 12 ms chunks so newer
+  costs interrupt older jobs, streams positions every ~40 ms.
+- `web/src/costLayout.ts`: `useLiveLayout` (debounced 60 ms) and the geometry:
+  edges straight between their nodes (drawn length ∝ cost), rivers/labels via
+  IDW of the 8 nearest nodes' displacement (precomputed once).
+- Matches the Python layout: heat today ±11 % / max shift 267 m (Python 268 m),
+  heat off ±2 % / 143 m (Python 143 m). Settles in ~1–2.5 s in a software-
+  rendered headless browser.
+- Because of the rescaling, a factor that raises all costs alike changes the
+  scale, not the shape; the scale bar shows real cost (1 m on screen =
+  1 / costScale m of cost). The precomputed layout is only the warm start.
+
+#### 3c – Editable factors: trees
+- Tree data per edge (Basel tree inventory) as baseline.
+- Per-edge −/+ in the inspector, global "+N trees per 100 m"; trees lower
+  cost and PET.
+- Optional: save/share edits via `/api/scenarios` (separate store).
 
 ### Phase 4 – Cost-space view ✅ (built, global layout)
 - `scripts/build_layout.py`: elastic network. Every edge is a spring with rest

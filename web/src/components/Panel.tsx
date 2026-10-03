@@ -1,4 +1,6 @@
-import type { GraphMeta, LayoutMeta } from "../api";
+import type { CostModel, Factor, GraphMeta } from "../api";
+import type { LiveLayout } from "../costLayout";
+import type { CostSettings, EdgeCosts, FactorSetting } from "../cost";
 import type { Scheme } from "../map/basemap";
 import { EDGE_CATEGORIES, categoryOf, costStops, type ColorMode } from "../map/style";
 import { formatCount, formatLength } from "../format";
@@ -10,11 +12,16 @@ interface Props {
   scheme: Scheme;
   mode: ColorMode;
   onModeChange: (mode: ColorMode) => void;
-  /** Set while the cost-space view is active. */
-  layout: LayoutMeta | null;
+  costModel: CostModel;
+  costs: EdgeCosts;
+  settings: CostSettings;
+  onSettingsChange: (settings: CostSettings) => void;
+  /** Live layout state, set while the cost-space view is active. */
+  layout: LiveLayout | null;
 }
 
-export function Panel({ meta, scheme, mode, onModeChange, layout }: Props) {
+export function Panel(props: Props) {
+  const { meta, scheme, mode, onModeChange, costs, layout } = props;
   return (
     <aside className="panel glass">
       <header className="panel-header">
@@ -45,6 +52,8 @@ export function Panel({ meta, scheme, mode, onModeChange, layout }: Props) {
         </div>
       </dl>
 
+      <CostSection {...props} />
+
       <section className="panel-section">
         <h2>Colour edges by</h2>
         <SegmentedControl
@@ -53,11 +62,12 @@ export function Panel({ meta, scheme, mode, onModeChange, layout }: Props) {
           onChange={onModeChange}
           options={[
             { value: "cost", label: "Cost" },
+            { value: "perMetre", label: "Per metre" },
             { value: "type", label: "Path type" },
           ]}
         />
-        {mode === "cost" ? (
-          <CostLegend meta={meta} scheme={scheme} />
+        {mode !== "type" ? (
+          <CostLegend mode={mode} costs={costs} scheme={scheme} />
         ) : (
           <TypeLegend meta={meta} scheme={scheme} />
         )}
@@ -75,8 +85,91 @@ export function Panel({ meta, scheme, mode, onModeChange, layout }: Props) {
   );
 }
 
-function CostLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
-  const stops = costStops(meta, scheme);
+function CostSection({ costModel, settings, onSettingsChange }: Props) {
+  const update = (key: string, change: Partial<FactorSetting>) =>
+    onSettingsChange({ ...settings, [key]: { ...settings[key], ...change } });
+
+  return (
+    <section className="panel-section">
+      <h2>Cost factors</h2>
+      {costModel.factors.map((factor) => (
+        <FactorCard
+          key={factor.key}
+          factor={factor}
+          setting={settings[factor.key]}
+          onChange={(change) => update(factor.key, change)}
+        />
+      ))}
+    </section>
+  );
+}
+
+function FactorCard({
+  factor,
+  setting,
+  onChange,
+}: {
+  factor: Factor;
+  setting: FactorSetting;
+  onChange: (change: Partial<FactorSetting>) => void;
+}) {
+  const on = setting.enabled;
+  return (
+    <div className={`factor ${on ? "" : "off"}`}>
+      <div className="factor-head">
+        <button
+          className="switch"
+          role="switch"
+          aria-checked={on}
+          aria-label={`${factor.label} ${on ? "on" : "off"}`}
+          onClick={() => onChange({ enabled: !on })}
+        />
+        <span title={factor.description}>{factor.label}</span>
+      </div>
+      {on && (
+        <>
+          {factor.variants.length > 1 && (
+            <SegmentedControl
+              label={`${factor.label} data`}
+              value={setting.variant ?? ""}
+              onChange={(variant) => onChange({ variant })}
+              options={factor.variants.map((v) => ({ value: v.key, label: v.label }))}
+            />
+          )}
+          <input
+            type="range"
+            min={0}
+            max={factor.weight_max}
+            step={factor.weight_max / 150}
+            value={setting.weight}
+            aria-label={`${factor.label} weight`}
+            style={{ "--fill": `${(setting.weight / factor.weight_max) * 100}%` } as React.CSSProperties}
+            onChange={(e) => onChange({ weight: Number(e.target.value) })}
+          />
+          <div className="factor-weight">
+            <span>Weight</span>
+            <span>
+              {factor.transform === "constant"
+                ? `each ${factor.unit} counts ×${setting.weight.toFixed(2)}`
+                : `+${(setting.weight * 100).toFixed(1)} % per ${factor.unit}`}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CostLegend({
+  mode,
+  costs,
+  scheme,
+}: {
+  mode: "cost" | "perMetre";
+  costs: EdgeCosts;
+  scheme: Scheme;
+}) {
+  const stops = costStops(mode, scheme);
   const gradient = `linear-gradient(90deg, ${stops.map(([, c]) => c).join(", ")})`;
   return (
     <div className="legend">
@@ -84,13 +177,19 @@ function CostLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
       <div className="ramp-labels">
         {stops.map(([v], i) => (
           <span key={i}>
-            {formatLength(v)}
+            {mode === "cost" ? formatLength(v) : `×${v}`}
             {i === stops.length - 1 ? "+" : ""}
           </span>
         ))}
       </div>
       <p className="subtle small">
-        Cost is length stretched by heat stress (PET), so hot streets cost more to walk.
+        {mode === "cost"
+          ? costs.isLength
+            ? "Total cost of each edge; with distance only, its length."
+            : "Total cost of each edge, from all active factors."
+          : costs.isLength
+            ? "Only distance counts: every metre counts once (×1)."
+            : "How much each metre counts: ×2 = twice its length."}
       </p>
     </div>
   );
@@ -115,27 +214,26 @@ function TypeLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
   );
 }
 
-function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
-  const spread = Math.max(1 - layout.edge_stretch_p05, layout.edge_stretch_p95 - 1);
+function CostSpaceNote({ layout }: { layout: LiveLayout }) {
+  const q = layout.quality;
+  const spread = q ? Math.max(1 - q.edgeStretchP05, q.edgeStretchP95 - 1) : null;
   return (
     <section className="panel-section cost-note">
-      <h2>Cost space</h2>
+      <h2>
+        Cost space
+        {layout.running && <span className="layout-status">laying out…</span>}
+      </h2>
       <p className="small">
-        Every edge is drawn as long as its cost, and nodes are gently pulled toward their real
-        location. Expensive edges push the city apart.
-      </p>
-      <p className="small subtle">
-        Cost is length stretched by heat stress (PET), so hot, shadeless streets push the city
-        apart and cool, comfortable ones pull it back together.
+        Every edge is drawn as long as its cost; expensive edges push the city apart.
       </p>
       <dl className="mini-stats">
         <div>
           <dt>Edge length vs cost</dt>
-          <dd>±{Math.max(1, Math.round(spread * 100))} %</dd>
+          <dd>{spread === null ? "–" : `±${Math.max(1, Math.round(spread * 100))} %`}</dd>
         </div>
         <div>
           <dt>Largest shift</dt>
-          <dd>{formatLength(layout.displacement_max_m)}</dd>
+          <dd>{q ? formatLength(q.displacementMaxM) : "–"}</dd>
         </div>
       </dl>
       <p className="footnote">Only the connected main network is shown.</p>

@@ -16,12 +16,18 @@ pull them together.
 were tried too: they inflate the whole city and fling dead ends outward,
 which makes the view unreadable.)
 
+Edge costs come from the default cost function of the cost model
+(cost_model.py, tables written by build_factors.py). For the layout they are
+rescaled so that total cost = total length: the city keeps its size, and
+expensive edges get longer while cheap ones get shorter. Without this, a
+cost function that makes every edge ~1.9× its length (heat) forces the
+network to crumple, because it is also pulled toward its real position.
+
 Writes:
   node_layout   node_id, x, y          (Swiss LV95 metres, same frame as nodes.x/y)
   layout_meta   one row of parameters and quality measures
-  edge_cost     edge_id, pet_mean_c, cost_m, for every main-component edge
-                (so the API can colour by, and the frontend inspect, the same
-                cost that shaped the layout, without recomputing it)
+  edge_cost     edge_id, pet_mean_c, cost_m (unscaled), for every
+                main-component edge, with the default cost function
 
 Usage:
     python scripts/build_layout.py [--db data/basel.duckdb] [--alpha 0.02]
@@ -34,49 +40,28 @@ from pathlib import Path
 import duckdb
 import numpy as np
 
-# PET (physiological equivalent temperature) thermal-sensation scale, VDI 3787:
-# up to 23 C is "no thermal stress"; above that, perceived heat stress rises
-# toward "extreme" above 41 C. PET_SCALE_C is how many degrees above comfort
-# double the walking cost of a metre, so a 41 C hot stretch costs ~2x its
-# physical length and a shaded, comfortable one still costs just its length.
-PET_COMFORT_C = 23.0
-PET_SCALE_C = 18.0
+from cost_model import DEFAULT_COST_FUNCTION, default_settings, evaluate
 
 
-def edge_cost(length_m, pet_mean_c):
-    """Walking cost of an edge in metres, inflated for heat stress.
-
-    Edges without a PET sample (pet_mean_c is NaN, e.g. no raster coverage)
-    cost their plain length, same as edges at a comfortable temperature.
-    """
-    heat_stress = np.where(
-        np.isnan(pet_mean_c), 0.0, np.maximum(pet_mean_c - PET_COMFORT_C, 0.0)
-    )
-    return length_m * (1 + heat_stress / PET_SCALE_C)
-
-
-def load_edge_pet(con, edge_ids):
-    """PET per edge id, NaN where edge_stadtklima is missing or has no sample."""
-    try:
-        pet = con.sql("SELECT edge_id, pet_mean_c FROM edge_stadtklima").fetchnumpy()
-    except duckdb.CatalogException:
-        return np.full(len(edge_ids), np.nan)
-    values = np.ma.filled(pet["pet_mean_c"].astype(float), np.nan)
-    by_id = dict(zip(pet["edge_id"], values))
-    return np.array([by_id.get(e, np.nan) for e in edge_ids], dtype=float)
+def edge_costs(con, where):
+    """(edge ids, raw values, cost) for the edges matching `where`, default cost function."""
+    edges = con.sql(f"""
+        SELECT e.id, e.source, e.target, f.*
+        FROM edges e JOIN edge_factors f ON f.edge_id = e.id
+        WHERE {where}
+        ORDER BY e.id
+    """).fetchnumpy()
+    columns = {k: np.ma.filled(v.astype(float), np.nan) for k, v in edges.items()}
+    return edges, columns, evaluate(columns["length_m"], columns, default_settings())
 
 
 def load_graph(con):
     nodes = con.sql("SELECT id, x, y FROM nodes WHERE component = 0 ORDER BY id").fetchnumpy()
-    edges = con.sql("""
-        SELECT id, source, target, length_m FROM edges
-        WHERE component = 0 AND source <> target
-    """).fetchnumpy()
+    edges, columns, cost = edge_costs(con, "e.component = 0 AND e.source <> e.target")
     index = {node_id: i for i, node_id in enumerate(nodes["id"])}
     src = np.array([index[s] for s in edges["source"]])
     dst = np.array([index[t] for t in edges["target"]])
-    pet = load_edge_pet(con, edges["id"])
-    return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, edges["length_m"], pet
+    return nodes["id"], np.column_stack([nodes["x"], nodes["y"]]), src, dst, columns["length_m"], cost
 
 
 def unique_edges(src, dst, cost):
@@ -125,8 +110,9 @@ def main():
     started = time.time()
 
     con = duckdb.connect(str(args.db))
-    node_ids, geo, src, dst, length, pet = load_graph(con)
-    a, b, cost = unique_edges(src, dst, edge_cost(length, pet))
+    node_ids, geo, src, dst, length, edge_cost = load_graph(con)
+    cost_scale = length.sum() / edge_cost.sum()
+    a, b, cost = unique_edges(src, dst, edge_cost * cost_scale)
 
     pos, iterations = majorize(geo, a, b, cost, args.alpha, args.max_iterations)
 
@@ -152,7 +138,8 @@ def main():
     con.execute("""
         CREATE OR REPLACE TABLE layout_meta (
             built_at TIMESTAMP,
-            cost VARCHAR,                 -- what edge_cost() is based on
+            cost VARCHAR,                 -- id of the cost function used
+            cost_scale DOUBLE,            -- costs × cost_scale = layout lengths (Σ = Σ length)
             alpha DOUBLE,
             iterations INTEGER,
             edge_stretch_median DOUBLE,   -- on-screen edge length / cost (1 = exact)
@@ -164,22 +151,19 @@ def main():
         )
     """)
     con.execute(
-        "INSERT INTO layout_meta VALUES (now(), 'length_m * heat_factor(pet_mean_c)', ?, ?, ?, ?, ?, ?, ?, ?)",
-        [args.alpha, iterations, *quality.values()],
+        "INSERT INTO layout_meta VALUES (now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [DEFAULT_COST_FUNCTION, cost_scale, args.alpha, iterations, *quality.values()],
     )
 
     # Every main-component edge's cost, including self-loops (dropped from the
     # spring layout above but still walkable and worth colouring/inspecting).
-    all_edges = con.sql(
-        "SELECT id, length_m FROM edges WHERE component = 0 ORDER BY id"
-    ).fetchnumpy()
-    all_pet = load_edge_pet(con, all_edges["id"])
-    all_cost = edge_cost(all_edges["length_m"], all_pet)
+    all_edges, all_columns, all_cost = edge_costs(con, "e.component = 0")
+    all_pet = all_columns["pet_c"]
     con.execute("""
         CREATE OR REPLACE TABLE edge_cost (
             edge_id BIGINT PRIMARY KEY,
             pet_mean_c DOUBLE,  -- NULL where edge_stadtklima has no sample
-            cost_m DOUBLE       -- edge_cost(length_m, pet_mean_c)
+            cost_m DOUBLE       -- cost with the default cost function (unscaled)
         )
     """)
     con.execute(
@@ -194,7 +178,8 @@ def main():
     con.close()
 
     print(
-        f"Laid out {len(node_ids)} nodes in {time.time() - started:.1f}s ({iterations} iterations). "
+        f"Laid out {len(node_ids)} nodes with {DEFAULT_COST_FUNCTION!r} (scale {cost_scale:.3f}) "
+        f"in {time.time() - started:.1f}s ({iterations} iterations). "
         f"Edge stretch median {quality['edge_stretch_median']:.3f} "
         f"(p5 {quality['edge_stretch_p05']:.3f}, p95 {quality['edge_stretch_p95']:.3f}); "
         f"displacement median {quality['displacement_median_m']:.0f} m, "

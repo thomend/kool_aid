@@ -221,9 +221,11 @@ def get_edge(edge_id: int):
 
 @router.post("/reload", response_model=GraphMeta)
 def reload():
-    """Re-read the database (graph and cost-space layout), e.g. after a rebuild."""
+    """Re-read the database (graph, cost-space layout, cost model), e.g. after a rebuild."""
+    from .cost import store as cost_store
     from .layout import store as layout_store
 
     store.load()
     layout_store.load()
+    cost_store.load()
     return store.meta

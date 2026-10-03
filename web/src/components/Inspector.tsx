@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
+import type { EdgeCosts } from "../cost";
 import type { Scheme } from "../map/basemap";
 import { categoryOf } from "../map/style";
-import { formatHighway, formatLength, formatPet } from "../format";
+import { formatHighway, formatLength } from "../format";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
 
 interface Props {
   selection: NonNullable<Selection>;
   scheme: Scheme;
+  costs: EdgeCosts;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -18,7 +20,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, scheme, costs, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -54,9 +56,9 @@ export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) 
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} scheme={scheme} onSelect={onSelect} />
+        <EdgeCard edge={current.data} scheme={scheme} costs={costs} onSelect={onSelect} />
       ) : (
-        <NodeCard node={current.data} scheme={scheme} onSelect={onSelect} />
+        <NodeCard node={current.data} scheme={scheme} costs={costs} onSelect={onSelect} />
       )}
     </section>
   );
@@ -74,12 +76,15 @@ function Chip({ highway, scheme }: { highway: string; scheme: Scheme }) {
 function EdgeCard({
   edge,
   scheme,
+  costs,
   onSelect,
 }: {
   edge: EdgeSummary;
   scheme: Scheme;
+  costs: EdgeCosts;
   onSelect: Props["onSelect"];
 }) {
+  const b = costs.breakdown(edge.id);
   return (
     <>
       <p className="eyebrow">Edge</p>
@@ -89,13 +94,10 @@ function EdgeCard({
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
-        {formatLength(edge.walk_cost_m)}
+        {formatLength(b?.cost ?? edge.length_m)}
         <span>cost</span>
       </div>
-      <p className="subtle small">
-        {formatLength(edge.length_m)} long
-        {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
-      </p>
+      {b && <CostBreakdown b={b} />}
       <ul className="list">
         {(
           [
@@ -127,10 +129,12 @@ function EdgeCard({
 function NodeCard({
   node,
   scheme,
+  costs,
   onSelect,
 }: {
   node: NodeDetail;
   scheme: Scheme;
+  costs: EdgeCosts;
   onSelect: Props["onSelect"];
 }) {
   const title =
@@ -162,7 +166,7 @@ function NodeCard({
                 aria-hidden
               />
               <span className="list-label">{e.street_name ?? formatHighway(e.highway)}</span>
-              <span className="list-value">{formatLength(e.length_m)}</span>
+              <span className="list-value">{formatLength(costs.get(e.id) ?? e.length_m)}</span>
               <ChevronIcon />
             </button>
           </li>
@@ -177,5 +181,37 @@ function NodeCard({
         View node {node.id} on OpenStreetMap
       </a>
     </>
+  );
+}
+
+/** One row per active factor with its contribution in metres; they add up to the cost. */
+function CostBreakdown({ b }: { b: NonNullable<ReturnType<EdgeCosts["breakdown"]>> }) {
+  const floored = b.parts.reduce((sum, p) => sum + p.metres, 0) < b.cost - 1e-6;
+  return (
+    <table className="breakdown small">
+      <tbody>
+        {b.parts.map((p) => (
+          <tr key={p.factor.key}>
+            <td>
+              {p.factor.label}
+              {p.variantLabel && <span className="subtle"> ({p.variantLabel})</span>}
+            </td>
+            <td className="subtle">
+              {p.factor.transform === "constant"
+                ? `${formatLength(b.length)} × ${p.weight.toFixed(2)}`
+                : p.value === null
+                  ? "no data"
+                  : `${p.value.toFixed(1)}${p.factor.key === "heat" ? " °C" : ""}`}
+            </td>
+            <td>+{formatLength(p.metres)}</td>
+          </tr>
+        ))}
+        <tr className="total">
+          <td>Cost</td>
+          <td className="subtle">{floored ? "minimum" : `${b.multiplier.toFixed(2)} per m`}</td>
+          <td>{formatLength(b.cost)}</td>
+        </tr>
+      </tbody>
+    </table>
   );
 }

@@ -67,7 +67,8 @@ export const fetchEdge = (id: number, signal?: AbortSignal) =>
 
 export interface LayoutMeta {
   built_at: string;
-  cost: string;
+  cost: string; // id of the cost function the layout was computed with
+  cost_scale: number;
   alpha: number;
   iterations: number;
   edge_stretch_median: number;
@@ -112,3 +113,51 @@ export interface CostSpaceData {
 
 export const fetchCostSpace = (signal?: AbortSignal) =>
   getJson<CostSpaceData>("/api/layout/cost-space", signal);
+
+// ---------- cost model (api/cost.py) ----------
+
+export interface FactorVariant {
+  key: string;
+  label: string;
+  column: string; // key in EdgeFactors.values
+}
+
+export interface Factor {
+  key: string;
+  label: string;
+  kind: "static" | "editable";
+  unit: string;
+  description: string;
+  variants: FactorVariant[]; // empty for constant factors
+  transform: "constant" | "above_threshold"; // x = 1 | x = max(value − threshold, 0)
+  threshold: number;
+  default_weight: number;
+  weight_max: number;
+}
+
+export interface CostFunction {
+  id: string;
+  label: string;
+  description: string;
+  factors: Record<string, { weight: number; variant: string | null }>; // missing = off
+  is_default: boolean;
+}
+
+export interface CostModel {
+  formula: string;
+  floor: number;
+  factors: Factor[];
+  functions: CostFunction[];
+  default_function: string;
+}
+
+export interface EdgeFactors {
+  edge_ids: number[];
+  values: Record<string, (number | null)[]>; // "length_m" plus the factor columns
+}
+
+export const fetchCostModel = (signal?: AbortSignal) =>
+  getJson<CostModel>("/api/cost/model", signal);
+
+export const fetchEdgeFactors = (signal?: AbortSignal) =>
+  getJson<EdgeFactors>("/api/cost/edge-factors", signal);

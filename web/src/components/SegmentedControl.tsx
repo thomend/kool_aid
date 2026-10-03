@@ -21,7 +21,8 @@ export function SegmentedControl<T extends string>({ options, value, onChange, l
       aria-label={label}
       style={{ "--count": options.length, "--index": index } as React.CSSProperties}
     >
-      <span className="segmented-thumb" aria-hidden />
+      {/* no thumb when nothing matches, e.g. custom cost settings */}
+      {index >= 0 && <span className="segmented-thumb" aria-hidden />}
       {options.map((o) => (
         <button
           key={o.value}

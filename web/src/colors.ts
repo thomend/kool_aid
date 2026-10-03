@@ -1,6 +1,5 @@
 // Colours as RGBA arrays for deck.gl, matching the MapLibre style.
 
-import type { GraphMeta } from "./api";
 import type { Scheme } from "./map/basemap";
 import { categoryOf, costStops, type ColorMode } from "./map/style";
 
@@ -11,12 +10,15 @@ export function hexToRgba(hex: string, alpha = 255): RGBA {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255, alpha];
 }
 
-export function edgeColorFn(mode: ColorMode, meta: GraphMeta, scheme: Scheme) {
+/** Colour for an edge from its path type, total cost or cost per metre. */
+export function edgeColorFn(mode: ColorMode, scheme: Scheme) {
   if (mode === "type") {
-    return (highway: string, _cost: number) => hexToRgba(categoryOf(highway).color[scheme]);
+    return (highway: string, _cost: number, _perMetre: number) =>
+      hexToRgba(categoryOf(highway).color[scheme]);
   }
-  const stops = costStops(meta, scheme).map(([v, c]) => [v, hexToRgba(c)] as const);
-  return (_highway: string, cost: number): RGBA => {
+  const stops = costStops(mode, scheme).map(([v, c]) => [v, hexToRgba(c)] as const);
+  return (_highway: string, totalCost: number, perMetre: number): RGBA => {
+    const cost = mode === "cost" ? totalCost : perMetre;
     if (cost <= stops[0][0]) return stops[0][1];
     for (let i = 1; i < stops.length; i++) {
       const [v1, c1] = stops[i];
