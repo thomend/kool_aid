@@ -4,3 +4,4 @@ python-dotenv
 ipykernel
 fastapi[standard]
 uvicorn[standard]
+duckdb
