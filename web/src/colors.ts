@@ -1,7 +1,6 @@
 // Colours as RGBA arrays for deck.gl, matching the MapLibre style.
 
 import type { Scheme } from "./map/basemap";
-import type { GraphMeta } from "./api";
 import { costStops, leverageStops, type ColorMode } from "./map/style";
 
 export type RGBA = [number, number, number, number];
@@ -11,9 +10,9 @@ export function hexToRgba(hex: string, alpha = 255): RGBA {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255, alpha];
 }
 
-/** Colour of an edge from its walking cost or, in leverage mode, its leverage percentile. */
-export function edgeColorFn(meta: GraphMeta, scheme: Scheme, mode: ColorMode = "cost") {
-  const ramp = mode === "leverage" ? leverageStops(scheme) : costStops(meta, scheme);
+/** Colour of an edge from its heat factor (cost per metre) or, in leverage mode, its leverage percentile. */
+export function edgeColorFn(scheme: Scheme, mode: ColorMode = "cost") {
+  const ramp = mode === "leverage" ? leverageStops(scheme) : costStops(scheme);
   const stops = ramp.map(([v, c]) => [v, hexToRgba(c)] as const);
   return (value: number): RGBA => {
     if (value <= stops[0][0]) return stops[0][1];

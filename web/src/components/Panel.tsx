@@ -53,13 +53,13 @@ export function Panel({
           value={mode}
           onChange={onModeChange}
           options={[
-            { value: "cost", label: "Walking cost" },
             {
               value: "leverage",
               label: "Shade priority",
               disabled: !hasLeverage,
               hint: hasLeverage ? undefined : "not built",
             },
+            { value: "cost", label: "Walking cost" },
           ]}
         />
       </section>

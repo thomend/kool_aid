@@ -129,6 +129,8 @@ export interface CostSpaceData {
     walk_cost_m: number[];
     /** Percentile rank of the leverage, 0 where shade would not help. */
     leverage_pct: number[];
+    /** Loose end of a road cut off where the data ends (mostly the city border); drawn faded. */
+    is_stub: boolean[];
     start_indices: number[];
     geo: number[];
     cost: number[];

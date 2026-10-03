@@ -69,7 +69,7 @@ export function MapView({
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, meta, profile, mode),
+      style: buildStyle(scheme, profile, mode),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -173,8 +173,8 @@ export function MapView({
     const key = `${scheme}|${profile}|${mode}`;
     if (key === styleKey.current) return;
     styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, meta, profile, mode));
-  }, [scheme, profile, mode, meta]);
+    mapRef.current?.setStyle(buildStyle(scheme, profile, mode));
+  }, [scheme, profile, mode]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

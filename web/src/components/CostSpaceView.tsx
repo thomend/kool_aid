@@ -6,10 +6,16 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
 import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl/core";
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
-import type { CostSpaceData, GraphMeta } from "../api";
+import type { CostSpaceData } from "../api";
 import type { Scheme } from "../map/basemap";
 import { ACCENT, categoryOf, type ColorMode } from "../map/style";
-import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
+import {
+  STREET_WIDTH_RATIO,
+  edgeColorFn,
+  edgeWidthAtZoom,
+  hexToRgba,
+  type RGBA,
+} from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHighway, formatLength, formatLeverage, formatPet } from "../format";
 import type { Selection } from "./MapView";
@@ -27,7 +33,6 @@ export interface CostSpaceHandle {
 
 interface Props {
   data: CostSpaceData;
-  meta: GraphMeta;
   scheme: Scheme;
   mode: ColorMode;
   t: number;
@@ -137,7 +142,7 @@ const PROFILE_TRANSITION_MS = 900;
 const easeInOutCubic = (k: number) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
 
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, mode, t, selection, onSelect },
+  { data, scheme, mode, t, selection, onSelect },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -268,10 +273,13 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const accent = hexToRgba(ACCENT[scheme]);
 
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(meta, scheme, mode);
-    const values = mode === "leverage" ? data.edges.leverage_pct : data.edges.walk_cost_m;
-    return Array.from(values, (v) => color(v));
-  }, [data, meta, scheme, mode]);
+    const color = edgeColorFn(scheme, mode);
+    const { leverage_pct, walk_cost_m, length_m, is_stub } = data.edges;
+    return walk_cost_m.map((cost, i) => {
+      const rgba = color(mode === "leverage" ? leverage_pct[i] : cost / Math.max(length_m[i], 0.1));
+      return is_stub[i] ? ([rgba[0], rgba[1], rgba[2], 60] as RGBA) : rgba;
+    });
+  }, [data, scheme, mode]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {

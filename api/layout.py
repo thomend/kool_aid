@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api/layout", tags=["layout"])
 TO_LV95 = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True)
 DECIMALS = 1  # 0.1 m
 IDW_NEIGHBOURS = 8
+# A dead end with no other node within this distance is the loose end of a road
+# cut off where the data ends (mostly at the city border), drawn faded.
+STUB_ISOLATION_M = 150.0
 
 
 class _Store:
@@ -111,6 +114,8 @@ def _build(con, profile):
     geo_paths = np.concatenate(geo_parts)
     cost_paths = np.concatenate(cost_parts)
 
+    stubs = _stubs(geo_xy, nodes["degree"], [index[s] for s in edges["source"]],
+                   [index[t] for t in edges["target"]])
     shift = _displacement_field(geo_xy, cost_xy - geo_xy)
     context_lines = []
     for name, wkt in lines:
@@ -162,12 +167,27 @@ def _build(con, profile):
             "walk_cost_m": edges["walk_cost_m"].round(1).tolist(),
             # percentile rank of where shade helps most, 0 where there is no leverage
             "leverage_pct": [round(leverage.get(e, 0.0), 1) for e in edges["id"].tolist()],
+            "is_stub": stubs,
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
         },
         "context": {"lines": context_lines, "labels": context_labels},
     }
+
+
+def _stubs(geo_xy, degree, src, dst):
+    """Per edge: is it a dead end whose loose end has no other node nearby?"""
+    stubs = []
+    for s, t in zip(src, dst):
+        stub = False
+        for end, other in ((s, t), (t, s)):
+            if degree[end] == 1:
+                d2 = ((geo_xy - geo_xy[end]) ** 2).sum(axis=1)
+                d2[[end, other]] = np.inf
+                stub = stub or d2.min() > STUB_ISOLATION_M**2
+        stubs.append(bool(stub))
+    return stubs
 
 
 def _nullable_floats(column):

@@ -159,7 +159,7 @@ export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
               sunny half. Edges outside the model area take the heat of their neighbours.
             </dd>
           </dl>
-          <CostLegend meta={meta} scheme={scheme} />
+          <CostLegend scheme={scheme} />
         </section>
 
         <section className="glossary-section">
@@ -205,7 +205,7 @@ export function Glossary({ meta, scheme, profile, layout, onClose }: Props) {
             <dd>
               The same network redrawn so that every edge is as long as its cost, while nodes stay
               as close as possible to their real location. Hot, shadeless streets push the city
-              apart; cool ones pull it together. Switching views animates between the two.
+              apart; cool ones pull it together. Roads cut off where the data ends, mostly at the city border, are drawn faded. Switching views animates between the two.
             </dd>
           </dl>
           {layout && (
@@ -251,24 +251,23 @@ function LeverageLegend({ scheme }: { scheme: Scheme }) {
   );
 }
 
-function CostLegend({ meta, scheme }: { meta: GraphMeta; scheme: Scheme }) {
-  const stops = costStops(meta, scheme);
+function CostLegend({ scheme }: { scheme: Scheme }) {
+  const stops = costStops(scheme);
   const gradient = `linear-gradient(90deg, ${stops.map(([, c]) => c).join(", ")})`;
   return (
     <div className="legend">
-      <h4>Edge colour</h4>
+      <h4>Edge colour in walking cost</h4>
       <div className="ramp" style={{ background: gradient }} />
       <div className="ramp-labels">
         {stops.map(([v], i) => (
           <span key={i}>
-            {formatLength(v)}
-            {i === stops.length - 1 ? "+" : ""}
+            {v}×{i === stops.length - 1 ? "+" : ""}
           </span>
         ))}
       </div>
       <p className="subtle small">
-        Colour shows each edge’s total cost. Because cost grows with length, long edges look warm
-        too; click an edge to see its PET.
+        Colour shows the heat factor, the cost of each metre: 1× where heat does not count, 2× where
+        a metre counts double. It does not depend on how long an edge is.
       </p>
     </div>
   );

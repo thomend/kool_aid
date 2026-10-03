@@ -7,7 +7,7 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
+import { EDGES_URL, NODES_URL } from "../api";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
@@ -51,18 +51,17 @@ export function categoryOf(highway: string): EdgeCategory {
   );
 }
 
-// Cool → hot: short (cheap) edges are blue, long (expensive) ones pink
+// Cool → hot by heat factor (cost per metre): blue where a metre costs a metre,
+// pink where heat makes it count double or more. Fixed stops, the same for every
+// profile, so switching heat sensitivity visibly changes the colours.
 const COST_RAMP: Record<Scheme, string[]> = {
   light: ["#5ac8fa", "#007aff", "#5856d6", "#af52de", "#ff2d55"],
   dark: ["#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff375f"],
 };
+const HEAT_FACTOR_STOPS = [1, 1.1, 1.5, 2, 3];
 
-export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
-  const q = meta.walk_cost_quantiles_m;
-  const values = [q.p10, q.p50, q.p75, q.p90, q.p90 * 2.5];
-  // interpolate needs strictly ascending stops
-  for (let i = 1; i < values.length; i++) values[i] = Math.max(values[i], values[i - 1] + 0.1);
-  return values.map((v, i) => [v, COST_RAMP[scheme][i]]);
+export function costStops(scheme: Scheme): [number, string][] {
+  return HEAT_FACTOR_STOPS.map((v, i) => [v, COST_RAMP[scheme][i]]);
 }
 
 // Grey → red: edges where shade would help little fade out, the top few percent glow red.
@@ -82,7 +81,6 @@ const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
 function edgeColor(
-  meta: GraphMeta,
   scheme: Scheme,
   profile: HeatProfile,
   mode: ColorMode,
@@ -98,8 +96,9 @@ function edgeColor(
   return [
     "interpolate",
     ["linear"],
-    ["get", `walk_cost_m_${profile}`],
-    ...costStops(meta, scheme).flat(),
+    // heat factor: walking cost per metre of length
+    ["/", ["get", `walk_cost_m_${profile}`], ["max", ["get", "length_m"], 0.1]],
+    ...costStops(scheme).flat(),
   ] as ExpressionSpecification;
 }
 
@@ -126,7 +125,6 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
 }
 
 function graphLayers(
-  meta: GraphMeta,
   scheme: Scheme,
   profile: HeatProfile,
   mode: ColorMode,
@@ -150,7 +148,7 @@ function graphLayers(
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile, mode)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(scheme, profile, mode)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -190,12 +188,11 @@ function graphLayers(
 
 export function buildStyle(
   scheme: Scheme,
-  meta: GraphMeta,
   profile: HeatProfile,
   mode: ColorMode,
 ): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(meta, scheme, profile, mode);
+  const [glow, edges, nodes] = graphLayers(scheme, profile, mode);
   return {
     version: 8,
     glyphs: GLYPHS,

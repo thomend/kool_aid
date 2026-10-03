@@ -50,7 +50,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
   const [profile, setProfile] = useState<HeatProfile>(DEFAULT_PROFILE);
-  const [mode, setMode] = useState<ColorMode>("cost");
+  // Shade priority is the main view; without its data (scripts/build_leverage.py) show cost
+  const [chosenMode, setMode] = useState<ColorMode>("leverage");
+  const mode: ColorMode = meta?.walks ? chosenMode : "cost";
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
   const [glossaryOpen, setGlossaryOpen] = useState(false);
@@ -263,7 +265,6 @@ export default function App() {
             <CostSpaceView
               ref={costRefCallback}
               data={costData}
-              meta={meta}
               scheme={scheme}
               mode={mode}
               t={t}
