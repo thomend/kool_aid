@@ -1,6 +1,6 @@
+import frontend
+import routes
 from fastapi import FastAPI
-
-import frontend, routes
 
 app = FastAPI(title="Mock FastAPI App - Hackaton")
 

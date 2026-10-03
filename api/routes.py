@@ -1,8 +1,7 @@
 """API routes backed by DuckDB."""
 
-from fastapi import APIRouter, HTTPException
-
 from db import get_connection
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/api")
 
