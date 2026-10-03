@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 # Install dependencies, including zsh
 RUN apt update && apt upgrade -y && \
-    apt install -y gcc git wget curl less unzip zsh && \
+    apt install -y gcc git wget curl less unzip zsh git-lfs && \
     pip install --no-cache-dir "pip==26.1.1" && \
     pip install --no-cache-dir "uv==0.12.22"
 

@@ -25,5 +25,5 @@
       }
     }
   },
-  "postCreateCommand": "python -m ipykernel install --name devcontainer --display-name 'Python 3.12 (devcontainer)' --sys-prefix"
+  "postCreateCommand": "python -m ipykernel install --name devcontainer --display-name 'Python 3.12 (devcontainer)' --sys-prefix && git lfs install"
 }
