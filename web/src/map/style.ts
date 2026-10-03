@@ -7,7 +7,8 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
+import { EDGES_URL, NODES_URL, type CostModel } from "../api";
+import { referenceMedian, type Relief } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
@@ -48,8 +49,9 @@ export function categoryOf(highway: string): EdgeCategory {
   );
 }
 
-// Diverging heat scale: heat cost per metre relative to the city median
-// (length-weighted, per profile). Cool teal → neutral grey → hot red; teal,
+// Diverging heat scale: heat cost per metre relative to a fixed reference, the
+// city median without trees and fountains (length-weighted, per profile), so
+// switching the relief on visibly cools streets down. Cool teal → neutral grey → hot red; teal,
 // not blue, so it never reads as the blue selection accent.
 export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
 const HEAT_RAMP: Record<Scheme, string[]> = {
@@ -58,22 +60,52 @@ const HEAT_RAMP: Record<Scheme, string[]> = {
 };
 export const NO_DATA: Record<Scheme, string> = { light: "#d1d1d6", dark: "#48484a" };
 
-/** [heat factor, colour] stops for a profile, centred on its city median. */
-export function heatStops(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): [number, string][] {
-  const median = meta.heat_factor_median[profile];
-  return HEAT_RATIOS.map((r, i) => [r * median, HEAT_RAMP[scheme][i]]);
+/** [heat factor, colour] stops for a profile, centred on its fixed reference. */
+export function heatStops(model: CostModel, scheme: Scheme, profile: HeatProfile): [number, string][] {
+  const reference = referenceMedian(model, profile);
+  return HEAT_RATIOS.map((r, i) => [r * reference, HEAT_RAMP[scheme][i]]);
+}
+
+/** costModel.heatFactor as a MapLibre expression over an edge's properties. */
+function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Relief): ExpressionSpecification {
+  const relieved = (on: boolean, effect: number, key: string): ExpressionSpecification | number =>
+    on ? ["-", 1, ["*", effect, ["coalesce", ["get", key], 0]]] : 1;
+  return [
+    "+",
+    1,
+    [
+      "/",
+      [
+        "*",
+        ["get", "heat_excess_sq_mean"],
+        relieved(relief.trees, model.shade_effect, "shade_share"),
+        relieved(relief.fountains, model.fountain_effect, "fountain_share"),
+      ],
+      model.scale_c[profile] ** 2,
+    ],
+  ];
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): ExpressionSpecification {
-  const key = `heat_factor_${profile}`;
+function edgeColor(
+  model: CostModel | null,
+  scheme: Scheme,
+  profile: HeatProfile,
+  relief: Relief,
+): ExpressionSpecification | string {
+  if (!model) return NO_DATA[scheme];
   return [
     "case",
-    ["has", key],
-    ["interpolate", ["linear"], ["get", key], ...heatStops(meta, scheme, profile).flat()],
+    ["has", "heat_excess_sq_mean"],
+    [
+      "interpolate",
+      ["linear"],
+      heatFactorExpression(model, profile, relief),
+      ...heatStops(model, scheme, profile).flat(),
+    ],
     NO_DATA[scheme],
   ] as ExpressionSpecification;
 }
@@ -100,7 +132,12 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): LayerSpecification[] {
+function graphLayers(
+  model: CostModel | null,
+  scheme: Scheme,
+  profile: HeatProfile,
+  relief: Relief,
+): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -120,7 +157,7 @@ function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): Lay
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(meta, scheme, profile)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, relief)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -158,9 +195,14 @@ function graphLayers(meta: GraphMeta, scheme: Scheme, profile: HeatProfile): Lay
   ];
 }
 
-export function buildStyle(scheme: Scheme, meta: GraphMeta, profile: HeatProfile): StyleSpecification {
+export function buildStyle(
+  scheme: Scheme,
+  model: CostModel | null,
+  profile: HeatProfile,
+  relief: Relief,
+): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(meta, scheme, profile);
+  const [glow, edges, nodes] = graphLayers(model, scheme, profile, relief);
   return {
     version: 8,
     glyphs: GLYPHS,

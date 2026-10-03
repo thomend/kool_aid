@@ -5,13 +5,16 @@ to a common origin (Swiss LV95), so the frontend can morph between the two.
 Data is columnar (flat coordinate lists) to keep the payload small and to
 load straight into GPU buffers.
 
-There is one layout per heat-sensitivity profile (see scripts/cost_model.py).
+There is one layout per heat-sensitivity profile (see scripts/cost_model.py) and
+relief variant (tree shade and fountains each counted or not). Each is built on
+first request and then cached.
 
 Built by scripts/build_layout.py (node_layout, layout_meta) and
 scripts/fetch_context.py (context_lines, context_labels).
 """
 
 import json
+import threading
 
 import duckdb
 import numpy as np
@@ -32,48 +35,67 @@ GRID_REACH_M = 200  # grid is only drawn this close to the network
 
 
 class _Store:
-    payloads: dict[str, bytes] = {}
-    error: str | None = None
+    """Cost-space payloads per (profile, trees, fountains), built on first request."""
+
+    def __init__(self):
+        self.payloads: dict[tuple[str, bool, bool], bytes] = {}
+        self.error: str | None = None
+        self.lock = threading.Lock()
 
     def load(self):
-        try:
-            self.payloads = {
-                p: _dump(_build(duckdb.connect(str(DB_PATH), read_only=True), p))
-                for p in PROFILES
-            }
-            self.error = None
-        except (duckdb.CatalogException, duckdb.BinderException, IndexError) as e:
+        """Drop the cache and build the default variant, which also checks the tables.
+
+        The other variants are then built in the background (~5 s each), so
+        switching profiles or relief is instant once they are done.
+        """
+        with self.lock:
             self.payloads = {}
-            self.error = f"Layout tables missing or outdated, run scripts/build_layout.py ({e})"
+        if self.get(DEFAULT_PROFILE, True, True) is not None:
+            threading.Thread(target=self._warm, daemon=True).start()
+
+    def _warm(self):
+        for profile in PROFILES:
+            for trees in (True, False):
+                for fountains in (True, False):
+                    self.get(profile, trees, fountains)
+
+    def get(self, profile, trees, fountains):
+        key = (profile, trees, fountains)
+        with self.lock:  # one build at a time; the others wait and then hit the cache
+            if key not in self.payloads:
+                try:
+                    con = duckdb.connect(str(DB_PATH), read_only=True)
+                    self.payloads[key] = _dump(_build(con, *key))
+                    self.error = None
+                except (duckdb.CatalogException, duckdb.BinderException, IndexError) as e:
+                    self.error = (
+                        f"Layout tables missing or outdated, run scripts/build_layout.py ({e})"
+                    )
+                    return None
+            return self.payloads[key]
 
 
-def _build(con, profile):
+def _build(con, profile, trees, fountains):
+    variant = [profile, trees, fountains]
     try:
         meta = con.sql(
-            "SELECT * FROM layout_meta WHERE profile = $1", params=[profile]
+            "SELECT * FROM layout_meta WHERE profile = $1 AND trees = $2 AND fountains = $3",
+            params=variant,
         ).fetchdf().iloc[0].to_dict()
         nodes = con.sql("""
             SELECT n.id, n.node_type, n.degree, n.x, n.y, l.x AS lx, l.y AS ly
-            FROM nodes n JOIN node_layout l ON l.node_id = n.id AND l.profile = $1
+            FROM nodes n JOIN node_layout l
+              ON l.node_id = n.id AND l.profile = $1 AND l.trees = $2 AND l.fountains = $3
             ORDER BY n.id
-        """, params=[profile]).fetchnumpy()
-        try:
-            edges = con.sql("""
-                SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
-                       e.length_m, ec.pet_mean_c, COALESCE(ec.cost_m, e.length_m) AS walk_cost_m,
-                       e.wkt
-                FROM edges e LEFT JOIN edge_cost ec ON ec.edge_id = e.id AND ec.profile = $1
-                WHERE e.component = 0
-                ORDER BY e.id
-            """, params=[profile]).fetchnumpy()
-        except duckdb.CatalogException:
-            # edge_cost not built yet (older build_layout.py run): fall back to length.
-            edges = con.sql("""
-                SELECT id, source, target, street_name, highway, is_pedestrian, length_m,
-                       NULL AS pet_mean_c, length_m AS walk_cost_m, wkt
-                FROM edges WHERE component = 0
-                ORDER BY id
-            """).fetchnumpy()
+        """, params=variant).fetchnumpy()
+        edges = con.sql("""
+            SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
+                   e.length_m, h.pet_mean_c, h.heat_excess_sq_mean, h.shade_share,
+                   h.fountain_share, e.wkt
+            FROM edges e JOIN edge_heat h ON h.edge_id = e.id
+            WHERE e.component = 0
+            ORDER BY e.id
+        """).fetchnumpy()
         try:
             lines = con.sql("SELECT name, wkt FROM context_lines").fetchall()
             labels = con.sql("SELECT name, kind, lon, lat FROM context_labels").fetchall()
@@ -135,7 +157,8 @@ def _build(con, profile):
     all_pts = np.vstack([geo_xy, cost_xy]) - origin
     return {
         "meta": {
-            k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in meta.items()
+            k: v.isoformat() if hasattr(v, "isoformat") else v.item() if hasattr(v, "item") else v
+            for k, v in meta.items()
         },
         "origin_lv95": origin.tolist(),
         "bounds": {
@@ -160,10 +183,10 @@ def _build(con, profile):
             "is_pedestrian": edges["is_pedestrian"].tolist(),
             "length_m": edges["length_m"].round(1).tolist(),
             "pet_mean_c": _nullable_floats(edges["pet_mean_c"]),
-            "walk_cost_m": edges["walk_cost_m"].round(1).tolist(),
-            "heat_factor": (
-                edges["walk_cost_m"] / np.maximum(edges["length_m"], 1e-6)
-            ).round(3).tolist(),
+            # cost ingredients, see CostModel in graph.py
+            "heat_excess_sq_mean": edges["heat_excess_sq_mean"].round(2).tolist(),
+            "shade_share": edges["shade_share"].round(3).tolist(),
+            "fountain_share": edges["fountain_share"].round(3).tolist(),
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
@@ -250,10 +273,11 @@ store = _Store()
 
 
 @router.get("/cost-space", response_description="Columnar geo + cost-space coordinates")
-def get_cost_space(profile: str = DEFAULT_PROFILE):
+def get_cost_space(profile: str = DEFAULT_PROFILE, trees: bool = True, fountains: bool = True):
     """Node and edge positions in geographic and cost space, plus context landmarks.
 
-    `profile` picks the heat-sensitivity profile the cost space is built for.
+    `profile` picks the heat-sensitivity profile the cost space is built for,
+    `trees` and `fountains` whether tree shade and fountains soften the cost.
 
     Coordinates are flat [x0, y0, x1, y1, ...] lists in metres relative to
     `origin_lv95`. Edge paths are concatenated; `start_indices` gives the first
@@ -261,15 +285,16 @@ def get_cost_space(profile: str = DEFAULT_PROFILE):
     """
     if profile not in PROFILES:
         raise HTTPException(422, f"profile must be one of {', '.join(PROFILES)}")
-    if not store.payloads:
+    payload = store.get(profile, trees, fountains)
+    if payload is None:
         raise HTTPException(503, store.error or "Layout not loaded")
-    return Response(store.payloads[profile], media_type="application/json")
+    return Response(payload, media_type="application/json")
 
 
 @router.post("/reload")
 def reload():
     """Re-read the layout, e.g. after running build_layout.py."""
     store.load()
-    if not store.payloads:
+    if store.error:
         raise HTTPException(503, store.error)
     return {"ok": True}

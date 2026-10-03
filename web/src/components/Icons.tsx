@@ -86,3 +86,19 @@ export const CaneIcon = () => (
     <path d="M11 8c-1.5 2-1.5 4-1 6.5M10 14.5L8 21M10 14.5l2.5 3V21M10.5 9.5l4.5 3M15 12.5c0-1.5 1.5-1.8 2-1M15 12.5V21" />
   </svg>
 );
+
+// Relief toggles: tree shade and fountains
+
+export const TreeIcon = () => (
+  <svg {...base} width={20} height={20} strokeWidth={2.2}>
+    <path d="M12 21v-6M12 15l-3-2.5M12 16.5l3-2.5" />
+    <path d="M12 3a5 5 0 0 1 4.8 3.6A4 4 0 0 1 16 14.5H8a4 4 0 0 1-.8-7.9A5 5 0 0 1 12 3z" />
+  </svg>
+);
+
+export const DropIcon = () => (
+  <svg {...base} width={20} height={20} strokeWidth={2.2}>
+    <path d="M12 3.5c3 3.6 6 6.9 6 10.5a6 6 0 0 1-12 0c0-3.6 3-6.9 6-10.5z" />
+    <path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5" />
+  </svg>
+);

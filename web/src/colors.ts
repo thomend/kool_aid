@@ -1,6 +1,6 @@
 // Colours as RGBA arrays for deck.gl, matching the MapLibre style.
 
-import type { GraphMeta } from "./api";
+import type { CostModel } from "./api";
 import type { Scheme } from "./map/basemap";
 import { heatStops } from "./map/style";
 import type { HeatProfile } from "./profiles";
@@ -13,8 +13,8 @@ export function hexToRgba(hex: string, alpha = 255): RGBA {
 }
 
 /** Colour of an edge from its heat factor (cost per metre), as in the map style. */
-export function edgeColorFn(meta: GraphMeta, scheme: Scheme, profile: HeatProfile) {
-  const stops = heatStops(meta, scheme, profile).map(([v, c]) => [v, hexToRgba(c)] as const);
+export function edgeColorFn(model: CostModel, scheme: Scheme, profile: HeatProfile) {
+  const stops = heatStops(model, scheme, profile).map(([v, c]) => [v, hexToRgba(c)] as const);
   return (factor: number): RGBA => {
     if (factor <= stops[0][0]) return stops[0][1];
     for (let i = 1; i < stops.length; i++) {

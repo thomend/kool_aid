@@ -187,6 +187,10 @@ h1 {
   gap: 8px;
 }
 
+.profiles.toggles {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .profile {
   display: flex;
   flex-direction: column;

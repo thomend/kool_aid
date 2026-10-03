@@ -13,6 +13,7 @@ import type { Scheme } from "../map/basemap";
 import { buildStyle, categoryOf } from "../map/style";
 import { formatHeatRatio, formatLength } from "../format";
 import type { HeatProfile } from "../profiles";
+import { heatFactor, referenceMedian, reliefKey, type Relief } from "../costModel";
 
 setWorkerUrl(workerUrl);
 
@@ -22,6 +23,7 @@ interface Props {
   meta: GraphMeta;
   scheme: Scheme;
   profile: HeatProfile;
+  relief: Relief;
   selection: Selection;
   onSelect: (s: Selection) => void;
   onMap: (map: MapLibreMap) => void;
@@ -46,22 +48,26 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
 }
 
 // Tooltip line for an edge feature's (flat) properties
-function edgeDetail(p: Record<string, any>, profile: HeatProfile, meta: GraphMeta): string {
-  const factor: number | undefined = p[`heat_factor_${profile}`];
+function edgeDetail(p: Record<string, any>, profile: HeatProfile, relief: Relief, meta: GraphMeta): string {
+  const model = meta.cost_model;
+  if (!model || p.heat_excess_sq_mean === undefined) {
+    return `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`;
+  }
+  const factor = heatFactor(model, profile, relief, p.heat_excess_sq_mean, p.shade_share, p.fountain_share);
   return [
-    `${formatLength(p[`walk_cost_m_${profile}`])} cost`,
-    ...(factor === undefined ? [] : [formatHeatRatio(factor, meta.heat_factor_median[profile])]),
+    `${formatLength(p.length_m * factor)} cost`,
+    formatHeatRatio(factor, referenceMedian(model, profile)),
     p.highway.replace("_", " "),
   ].join(" · ");
 }
 
-export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onGraphLoaded }: Props) {
+export function MapView({ meta, scheme, profile, relief, selection, onSelect, onMap, onGraphLoaded }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded, profile, meta });
-  handlers.current = { onSelect, onGraphLoaded, profile, meta };
+  const handlers = useRef({ onSelect, onGraphLoaded, profile, relief, meta });
+  handlers.current = { onSelect, onGraphLoaded, profile, relief, meta };
 
   // Create the map once
   useEffect(() => {
@@ -69,7 +75,7 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, meta, profile),
+      style: buildStyle(scheme, meta.cost_model, profile, relief),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -127,7 +133,7 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: edgeDetail(p, handlers.current.profile, handlers.current.meta),
+              detail: edgeDetail(p, handlers.current.profile, handlers.current.relief, handlers.current.meta),
             }
           : {
               x: e.point.x,
@@ -158,15 +164,16 @@ export function MapView({ meta, scheme, profile, selection, onSelect, onMap, onG
     };
   }, []);
 
-  // Restyle on theme / heat profile change (MapLibre diffs the styles).
+  // Restyle on theme / heat profile / relief change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const styleKey = useRef(`${scheme}|${profile}`);
+  const key = `${scheme}|${profile}|${reliefKey(relief)}`;
+  const styleKey = useRef(key);
   useEffect(() => {
-    const key = `${scheme}|${profile}`;
     if (key === styleKey.current) return;
     styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, meta, profile));
-  }, [scheme, profile, meta]);
+    mapRef.current?.setStyle(buildStyle(scheme, meta.cost_model, profile, relief));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, meta]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

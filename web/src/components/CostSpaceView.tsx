@@ -8,7 +8,8 @@ import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, categoryOf } from "../map/style";
+import { ACCENT, NO_DATA, categoryOf } from "../map/style";
+import { heatFactor, referenceMedian } from "../costModel";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
@@ -284,12 +285,22 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const palette = PALETTE[scheme];
   const accent = hexToRgba(ACCENT[scheme]);
 
-  const profile = data.meta.profile;
-  const median = meta.heat_factor_median[profile];
+  // Heat factors of the profile and relief this layout was built for
+  const { profile, trees, fountains } = data.meta;
+  const model = meta.cost_model;
+  const factors = useMemo(() => {
+    const e = data.edges;
+    if (!model) return e.ids.map(() => 1);
+    const relief = { trees, fountains };
+    return e.ids.map((_, i) =>
+      heatFactor(model, profile, relief, e.heat_excess_sq_mean[i], e.shade_share[i], e.fountain_share[i]),
+    );
+  }, [data, model, profile, trees, fountains]);
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(meta, scheme, profile);
-    return Array.from(data.edges.heat_factor, (f) => color(f));
-  }, [data, meta, scheme, profile]);
+    if (!model) return factors.map(() => hexToRgba(NO_DATA[scheme]));
+    const color = edgeColorFn(model, scheme, profile);
+    return factors.map((f) => color(f));
+  }, [factors, model, scheme, profile]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -353,7 +364,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [scheme] },
+      updateTriggers: { getColor: [scheme, edgeColors] },
     }),
     selectedPath &&
       new PathLayer({
@@ -445,8 +456,8 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
         detail: [
-          formatLength(data.edges.walk_cost_m[i]) + " cost",
-          formatHeatRatio(data.edges.heat_factor[i], median),
+          formatLength(data.edges.length_m[i] * factors[i]) + " cost",
+          ...(model ? [formatHeatRatio(factors[i], referenceMedian(model, profile))] : []),
           formatHighway(data.edges.highway[i]).toLowerCase(),
           ...(pet ? [pet] : []),
         ].join(" · "),

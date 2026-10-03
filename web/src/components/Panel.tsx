@@ -2,7 +2,8 @@ import type { GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { HEAT_RATIOS, heatStops } from "../map/style";
 import { PROFILES, heatFactor, type HeatProfile } from "../profiles";
-import { CaneIcon, InfoIcon, RunIcon, WalkIcon } from "./Icons";
+import { referenceMedian, type Relief } from "../costModel";
+import { CaneIcon, DropIcon, InfoIcon, RunIcon, TreeIcon, WalkIcon } from "./Icons";
 
 const PROFILE_ICONS: Record<HeatProfile, () => React.JSX.Element> = {
   low: RunIcon,
@@ -15,11 +16,22 @@ interface Props {
   scheme: Scheme;
   profile: HeatProfile;
   onProfileChange: (profile: HeatProfile) => void;
+  relief: Relief;
+  onReliefChange: (relief: Relief) => void;
   infoOpen: boolean;
   onToggleInfo: () => void;
 }
 
-export function Panel({ meta, scheme, profile, onProfileChange, infoOpen, onToggleInfo }: Props) {
+export function Panel({
+  meta,
+  scheme,
+  profile,
+  onProfileChange,
+  relief,
+  onReliefChange,
+  infoOpen,
+  onToggleInfo,
+}: Props) {
   return (
     <aside className="panel glass">
       <header className="panel-header">
@@ -40,6 +52,7 @@ export function Panel({ meta, scheme, profile, onProfileChange, infoOpen, onTogg
         </button>
       </header>
       <ProfilePicker profile={profile} onChange={onProfileChange} />
+      <ReliefToggles relief={relief} onChange={onReliefChange} />
       <HeatLegend meta={meta} scheme={scheme} profile={profile} />
     </aside>
   );
@@ -82,10 +95,40 @@ function ProfilePicker({
   );
 }
 
+const RELIEF_TOGGLES = [
+  { key: "trees", label: "Tree shade", Icon: TreeIcon },
+  { key: "fountains", label: "Fountains", Icon: DropIcon },
+] as const;
+
+function ReliefToggles({ relief, onChange }: { relief: Relief; onChange: (relief: Relief) => void }) {
+  return (
+    <section className="panel-section">
+      <h2>Count in</h2>
+      <div className="profiles toggles">
+        {RELIEF_TOGGLES.map(({ key, label, Icon }) => (
+          <button
+            key={key}
+            aria-pressed={relief[key]}
+            className={`profile ${relief[key] ? "active" : ""}`}
+            onClick={() => onChange({ ...relief, [key]: !relief[key] })}
+          >
+            <span className="profile-icon">
+              <Icon />
+            </span>
+            {label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function HeatLegend({ meta, scheme, profile }: { meta: GraphMeta; scheme: Scheme; profile: HeatProfile }) {
-  const stops = heatStops(meta, scheme, profile);
+  const model = meta.cost_model;
+  if (!model) return null;
+  const stops = heatStops(model, scheme, profile);
   const gradient = `linear-gradient(90deg, ${stops.map(([, c]) => c).join(", ")})`;
-  const median = meta.heat_factor_median[profile];
+  const reference = referenceMedian(model, profile);
   return (
     <section className="panel-section">
       <h2>Heat cost per metre</h2>
@@ -97,7 +140,8 @@ function HeatLegend({ meta, scheme, profile }: { meta: GraphMeta; scheme: Scheme
           ))}
         </div>
         <p className="subtle small">
-          Compared with a typical metre of Basel, which costs {median.toFixed(1)}× its length.
+          Compared with a typical metre of Basel without trees and fountains, which costs{" "}
+          {reference.toFixed(1)}× its length.
         </p>
       </div>
     </section>
