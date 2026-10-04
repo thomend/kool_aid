@@ -25,7 +25,7 @@ Writes:
   layout_meta   one row of parameters and quality measures per profile and variant
 
 Usage:
-    python scripts/build_layout.py [--db data/basel.duckdb] [--exaggeration 5]
+    python scripts/build_layout.py [--db data/basel.duckdb] [--exaggeration 4]
 """
 
 import argparse
@@ -51,7 +51,7 @@ from cost_model import (
 # Factor variants: (tree shade, fountains, slope) each counted or not
 VARIANTS = [(t, f, s) for t in (False, True) for f in (False, True) for s in (False, True)]
 
-EXAGGERATION = 5.0  # target area = ratio ** this; at 5, the hottest blocks grow ~3-4x
+EXAGGERATION = 4.0  # target area = ratio ** this; at 4, the hottest blocks grow ~2-3x
 CELL_M = 50.0  # cartogram grid
 GRID_SIZE = 512  # cells per side (25.6 km), a wide neutral margin around Basel
 SMOOTHING_M = 125.0  # neighbourhood scale of the heat field
