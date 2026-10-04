@@ -3,15 +3,18 @@ import {
   AttributionControl,
   Map as MapLibreMap,
   setWorkerUrl,
+  type GeoJSONSource,
   type MapGeoJSONFeature,
   type PointLike,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import type { GraphMeta } from "../api";
+import type { GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
-import { buildStyle, categoryOf, type ColorMode } from "../map/style";
-import { formatLength } from "../format";
+import { ROUTE_POINTS_SOURCE, ROUTE_SOURCE, buildStyle, categoryOf } from "../map/style";
+import { formatHeatRatio, formatLength } from "../format";
+import type { HeatProfile } from "../profiles";
+import { heatFactor, referenceMedian, reliefKey, type Relief } from "../costModel";
 
 setWorkerUrl(workerUrl);
 
@@ -20,7 +23,13 @@ export type Selection = { kind: "node" | "edge"; id: number } | null;
 interface Props {
   meta: GraphMeta;
   scheme: Scheme;
-  mode: ColorMode;
+  profile: HeatProfile;
+  relief: Relief;
+  /** Route comparison to draw, if any. */
+  routes: RouteComparison | null;
+  /** Picking route points: clicks report a location instead of selecting. */
+  picking: boolean;
+  onPick: (lon: number, lat: number) => void;
   selection: Selection;
   onSelect: (s: Selection) => void;
   onMap: (map: MapLibreMap) => void;
@@ -44,13 +53,39 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
   ];
 }
 
-export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGraphLoaded }: Props) {
+// Tooltip line for an edge feature's (flat) properties
+function edgeDetail(p: Record<string, any>, profile: HeatProfile, relief: Relief, meta: GraphMeta): string {
+  const model = meta.cost_model;
+  if (!model || p.heat_excess_sq_mean === undefined) {
+    return `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`;
+  }
+  const factor = heatFactor(model, profile, relief, p.heat_excess_sq_mean, p.shade_share, p.fountain_share);
+  return [
+    `${formatLength(p.length_m * factor)} cost`,
+    formatHeatRatio(factor, referenceMedian(model, profile)),
+    p.highway.replace("_", " "),
+  ].join(" · ");
+}
+
+export function MapView({
+  meta,
+  scheme,
+  profile,
+  relief,
+  routes,
+  picking,
+  onPick,
+  selection,
+  onSelect,
+  onMap,
+  onGraphLoaded,
+}: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded });
-  handlers.current = { onSelect, onGraphLoaded };
+  const handlers = useRef({ onSelect, onGraphLoaded, onPick, picking, profile, relief, meta });
+  handlers.current = { onSelect, onGraphLoaded, onPick, picking, profile, relief, meta };
 
   // Create the map once
   useEffect(() => {
@@ -58,7 +93,7 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, mode, meta),
+      style: buildStyle(scheme, meta.cost_model, profile, relief),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -105,6 +140,13 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     };
 
     map.on("mousemove", (e) => {
+      if (handlers.current.picking) {
+        // picking route points: no hover or tooltip, just a crosshair
+        setHover(null);
+        setTooltip(null);
+        map.getCanvas().style.cursor = "crosshair";
+        return;
+      }
       const f = featureAt(e.point);
       setHover(f);
       map.getCanvas().style.cursor = f ? "pointer" : "";
@@ -116,7 +158,7 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`,
+              detail: edgeDetail(p, handlers.current.profile, handlers.current.relief, handlers.current.meta),
             }
           : {
               x: e.point.x,
@@ -132,6 +174,10 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     });
     map.on("movestart", () => setTooltip(null));
     map.on("click", (e) => {
+      if (handlers.current.picking) {
+        handlers.current.onPick(e.lngLat.lng, e.lngLat.lat);
+        return;
+      }
       const f = featureAt(e.point);
       handlers.current.onSelect(
         f ? { kind: f.source === SOURCE.node ? "node" : "edge", id: Number(f.id) } : null,
@@ -147,15 +193,55 @@ export function MapView({ meta, scheme, mode, selection, onSelect, onMap, onGrap
     };
   }, []);
 
-  // Restyle on theme / colour mode change (MapLibre diffs the styles).
+  // Restyle on theme / heat profile / relief change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const styleKey = useRef(`${scheme}|${mode}`);
+  const key = `${scheme}|${profile}|${reliefKey(relief)}`;
+  const styleKey = useRef(key);
   useEffect(() => {
-    const key = `${scheme}|${mode}`;
     if (key === styleKey.current) return;
     styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, mode, meta));
-  }, [scheme, mode, meta]);
+    mapRef.current?.setStyle(buildStyle(scheme, meta.cost_model, profile, relief));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, meta]);
+
+  // Draw the route comparison (also after a restyle)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      const lines = map.getSource(ROUTE_SOURCE) as GeoJSONSource | undefined;
+      const points = map.getSource(ROUTE_POINTS_SOURCE) as GeoJSONSource | undefined;
+      lines?.setData({
+        type: "FeatureCollection",
+        // shortest first, so the coolest route is drawn on top where they overlap
+        features: routes
+          ? (["shortest", "coolest"] as const).map((kind) => ({
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: routes[kind].coordinates },
+              properties: { kind },
+            }))
+          : [],
+      });
+      points?.setData({
+        type: "FeatureCollection",
+        features: routes
+          ? (["start", "end"] as const).map((kind) => ({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [routes[kind].lon, routes[kind].lat] },
+              properties: { kind },
+            }))
+          : [],
+      });
+    };
+    if (map.getSource(ROUTE_SOURCE)) apply();
+    else map.once("styledata", apply);
+  }, [routes, key]);
+
+  // Picking: crosshair right away, not only after the next mouse move
+  useEffect(() => {
+    const canvas = mapRef.current?.getCanvas();
+    if (canvas) canvas.style.cursor = picking ? "crosshair" : "";
+  }, [picking]);
 
   // Reflect the selection as feature-state
   useEffect(() => {

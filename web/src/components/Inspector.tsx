@@ -1,14 +1,31 @@
 import { useEffect, useState } from "react";
-import { fetchEdge, fetchNode, type EdgeSummary, type NodeDetail } from "../api";
-import type { Scheme } from "../map/basemap";
+import {
+  fetchEdge,
+  fetchNode,
+  type CostModel,
+  type EdgeSummary,
+  type GraphMeta,
+  type NodeDetail,
+} from "../api";
+import { heatFactor, referenceMedian, type Relief } from "../costModel";
 import { categoryOf } from "../map/style";
-import { formatHighway, formatLength, formatPet } from "../format";
+import {
+  formatFountain,
+  formatHeatRatio,
+  formatHighway,
+  formatLength,
+  formatPet,
+  formatTrees,
+} from "../format";
+import type { HeatProfile } from "../profiles";
 import type { Selection } from "./MapView";
 import { ChevronIcon, CloseIcon } from "./Icons";
 
 interface Props {
   selection: NonNullable<Selection>;
-  scheme: Scheme;
+  meta: GraphMeta;
+  profile: HeatProfile;
+  relief: Relief;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -18,7 +35,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, meta, profile, relief, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -54,48 +71,64 @@ export function Inspector({ selection, scheme, onSelect, onNodeLoaded }: Props) 
       ) : !current ? (
         <div className="skeleton" />
       ) : current.kind === "edge" ? (
-        <EdgeCard edge={current.data} scheme={scheme} onSelect={onSelect} />
+        <EdgeCard
+          edge={current.data}
+          model={meta.cost_model}
+          profile={profile}
+          relief={relief}
+          onSelect={onSelect}
+        />
       ) : (
-        <NodeCard node={current.data} scheme={scheme} onSelect={onSelect} />
+        <NodeCard node={current.data} onSelect={onSelect} />
       )}
     </section>
   );
 }
 
-function Chip({ highway, scheme }: { highway: string; scheme: Scheme }) {
-  const c = categoryOf(highway);
-  return (
-    <span className="chip" style={{ "--chip": c.color[scheme] } as React.CSSProperties}>
-      {formatHighway(highway)}
-    </span>
-  );
+function Chip({ highway }: { highway: string }) {
+  return <span className="chip">{formatHighway(highway)}</span>;
 }
 
 function EdgeCard({
   edge,
-  scheme,
+  model,
+  profile,
+  relief,
   onSelect,
 }: {
   edge: EdgeSummary;
-  scheme: Scheme;
+  model: CostModel | null;
+  profile: HeatProfile;
+  relief: Relief;
   onSelect: Props["onSelect"];
 }) {
+  const factor =
+    model && edge.heat_excess_sq_mean !== null
+      ? heatFactor(model, profile, relief, edge.heat_excess_sq_mean, edge.shade_share, edge.fountain_share)
+      : null;
   return (
     <>
       <p className="eyebrow">Edge</p>
       <h3>{edge.street_name ?? categoryOf(edge.highway).label}</h3>
       <div className="chips">
-        <Chip highway={edge.highway} scheme={scheme} />
+        <Chip highway={edge.highway} />
         {edge.component !== 0 && <span className="chip muted">Disconnected</span>}
       </div>
       <div className="big-number">
-        {formatLength(edge.walk_cost_m)}
+        {formatLength(edge.length_m * (factor ?? 1))}
         <span>cost</span>
       </div>
       <p className="subtle small">
         {formatLength(edge.length_m)} long
         {formatPet(edge.pet_mean_c) ? ` · ${formatPet(edge.pet_mean_c)}` : ""}
+        {model && factor !== null ? ` · ${formatHeatRatio(factor, referenceMedian(model, profile))}` : ""}
       </p>
+      {edge.shade_share !== null && edge.tree_count !== null && (
+        <p className="subtle small">{formatTrees(edge.tree_count, edge.shade_share)}</p>
+      )}
+      {edge.nearest_fountain_m !== null && (
+        <p className="subtle small">{formatFountain(edge.nearest_fountain, edge.nearest_fountain_m)}</p>
+      )}
       <ul className="list">
         {(
           [
@@ -126,11 +159,9 @@ function EdgeCard({
 
 function NodeCard({
   node,
-  scheme,
   onSelect,
 }: {
   node: NodeDetail;
-  scheme: Scheme;
   onSelect: Props["onSelect"];
 }) {
   const title =
@@ -156,11 +187,6 @@ function NodeCard({
         {node.edges.map((e) => (
           <li key={e.id}>
             <button onClick={() => onSelect({ kind: "edge", id: e.id })}>
-              <span
-                className="dot"
-                style={{ background: categoryOf(e.highway).color[scheme] }}
-                aria-hidden
-              />
               <span className="list-label">{e.street_name ?? formatHighway(e.highway)}</span>
               <span className="list-value">{formatLength(e.length_m)}</span>
               <ChevronIcon />

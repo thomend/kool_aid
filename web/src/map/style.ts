@@ -7,86 +7,80 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type GraphMeta } from "../api";
+import { EDGES_URL, NODES_URL, type CostModel } from "../api";
+import { referenceMedian, type Relief } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
+import type { HeatProfile } from "../profiles";
 
-export type ColorMode = "cost" | "type";
-
-export interface EdgeCategory {
-  key: string;
-  label: string;
-  highways: string[];
-  color: Record<Scheme, string>;
-}
-
-// Order matters: the first category whose highways match wins
-export const EDGE_CATEGORIES: EdgeCategory[] = [
-  {
-    key: "steps",
-    label: "Steps",
-    highways: ["steps"],
-    color: { light: "#ff2d55", dark: "#ff375f" },
-  },
-  {
-    key: "zone",
-    label: "Pedestrian zone",
-    highways: ["pedestrian", "living_street"],
-    color: { light: "#ff9500", dark: "#ff9f0a" },
-  },
-  {
-    key: "footpath",
-    label: "Footpath",
-    highways: ["footway", "path", "track", "cycleway"],
-    color: { light: "#007aff", dark: "#0a84ff" },
-  },
-  {
-    key: "street",
-    label: "Street",
-    highways: [],
-    color: { light: "#a1a1a8", dark: "#6c6c72" },
-  },
+// Path categories for labels. Order matters: the first match wins, the last is the fallback.
+const EDGE_CATEGORIES: { label: string; highways: string[] }[] = [
+  { label: "Steps", highways: ["steps"] },
+  { label: "Pedestrian zone", highways: ["pedestrian", "living_street"] },
+  { label: "Footpath", highways: ["footway", "path", "track", "cycleway"] },
+  { label: "Street", highways: [] },
 ];
 
-export function categoryOf(highway: string): EdgeCategory {
-  return (
-    EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ??
-    EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1]
-  );
+export const categoryOf = (highway: string) =>
+  EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ?? EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1];
+
+// Diverging heat scale: heat cost per metre relative to a fixed reference, the
+// median without trees and fountains, so switching them on visibly cools streets
+// down. Teal, not blue, so it never reads as the blue selection accent.
+export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
+const HEAT_RAMP: Record<Scheme, string[]> = {
+  light: ["#0b8a92", "#62bcc4", "#c4c4c9", "#f39a5b", "#e0352b"],
+  dark: ["#40c8e0", "#2c8c99", "#636366", "#d9733f", "#ff453a"],
+};
+export const NO_DATA: Record<Scheme, string> = { light: "#d1d1d6", dark: "#48484a" };
+
+/** [heat factor, colour] stops for a profile, centred on its fixed reference. */
+export function heatStops(model: CostModel, scheme: Scheme, profile: HeatProfile): [number, string][] {
+  const reference = referenceMedian(model, profile);
+  return HEAT_RATIOS.map((r, i) => [r * reference, HEAT_RAMP[scheme][i]]);
 }
 
-// Cool → hot: short (cheap) edges are blue, long (expensive) ones pink
-const COST_RAMP: Record<Scheme, string[]> = {
-  light: ["#5ac8fa", "#007aff", "#5856d6", "#af52de", "#ff2d55"],
-  dark: ["#64d2ff", "#0a84ff", "#5e5ce6", "#bf5af2", "#ff375f"],
-};
-
-export function costStops(meta: GraphMeta, scheme: Scheme): [number, string][] {
-  const q = meta.walk_cost_quantiles_m;
-  const values = [q.p10, q.p50, q.p75, q.p90, q.p90 * 2.5];
-  // interpolate needs strictly ascending stops
-  for (let i = 1; i < values.length; i++) values[i] = Math.max(values[i], values[i - 1] + 0.1);
-  return values.map((v, i) => [v, COST_RAMP[scheme][i]]);
+/** costModel.heatFactor as a MapLibre expression over an edge's properties. */
+function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Relief): ExpressionSpecification {
+  const relieved = (on: boolean, effect: number, key: string): ExpressionSpecification | number =>
+    on ? ["-", 1, ["*", effect, ["coalesce", ["get", key], 0]]] : 1;
+  return [
+    "+",
+    1,
+    [
+      "/",
+      [
+        "*",
+        ["get", "heat_excess_sq_mean"],
+        relieved(relief.trees, model.shade_effect, "shade_share"),
+        relieved(relief.fountains, model.fountain_effect, "fountain_share"),
+      ],
+      model.scale_c[profile] ** 2,
+    ],
+  ];
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
 const SURFACE: Record<Scheme, string> = { light: "#ffffff", dark: "#2c2c2e" };
 const NODE_STROKE: Record<Scheme, string> = { light: "#3a3a3c", dark: "#d1d1d6" };
 
-function edgeColor(mode: ColorMode, meta: GraphMeta, scheme: Scheme): ExpressionSpecification {
-  if (mode === "cost") {
-    return [
+function edgeColor(
+  model: CostModel | null,
+  scheme: Scheme,
+  profile: HeatProfile,
+  relief: Relief,
+): ExpressionSpecification | string {
+  if (!model) return NO_DATA[scheme];
+  return [
+    "case",
+    ["has", "heat_excess_sq_mean"],
+    [
       "interpolate",
       ["linear"],
-      ["get", "walk_cost_m"],
-      ...costStops(meta, scheme).flat(),
-    ] as ExpressionSpecification;
-  }
-  const match: unknown[] = ["match", ["get", "highway"]];
-  for (const c of EDGE_CATEGORIES) {
-    if (c.highways.length) match.push(c.highways, c.color[scheme]);
-  }
-  match.push(EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1].color[scheme]);
-  return match as ExpressionSpecification;
+      heatFactorExpression(model, profile, relief),
+      ...heatStops(model, scheme, profile).flat(),
+    ],
+    NO_DATA[scheme],
+  ] as ExpressionSpecification;
 }
 
 const isPedestrian: ExpressionSpecification = ["==", ["get", "is_pedestrian"], true];
@@ -111,7 +105,12 @@ function edgeWidth(scale: number | ExpressionSpecification, extra = 0): Expressi
   ];
 }
 
-function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpecification[] {
+function graphLayers(
+  model: CostModel | null,
+  scheme: Scheme,
+  profile: HeatProfile,
+  relief: Relief,
+): LayerSpecification[] {
   return [
     {
       id: "edges-glow",
@@ -131,7 +130,7 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(mode, meta, scheme)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, relief)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -169,9 +168,69 @@ function graphLayers(mode: ColorMode, meta: GraphMeta, scheme: Scheme): LayerSpe
   ];
 }
 
-export function buildStyle(scheme: Scheme, mode: ColorMode, meta: GraphMeta): StyleSpecification {
+// Route comparison: the coolest route in blue, the shortest one dashed
+export const ROUTE_SOURCE = "routes";
+export const ROUTE_POINTS_SOURCE = "route-points";
+export const ROUTE_COLOR: Record<"coolest" | "shortest", Record<Scheme, string>> = {
+  coolest: ACCENT,
+  shortest: { light: "#3a3a3c", dark: "#e5e5ea" },
+};
+const emptyCollection = (): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: [] });
+
+function routeLayers(scheme: Scheme): LayerSpecification[] {
+  const width = (w: number): ExpressionSpecification =>
+    ["interpolate", ["exponential", 1.5], ["zoom"], 12, w, 16, w * 2, 19, w * 3.5];
+  const isKind = (kind: string): ExpressionSpecification => ["==", ["get", "kind"], kind];
+  return [
+    {
+      id: "route-casing",
+      type: "line",
+      source: ROUTE_SOURCE,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": SURFACE[scheme], "line-width": width(5), "line-opacity": 0.9 },
+    },
+    {
+      id: "route-shortest",
+      type: "line",
+      source: ROUTE_SOURCE,
+      filter: isKind("shortest"),
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": ROUTE_COLOR.shortest[scheme],
+        "line-width": width(2.2),
+        "line-dasharray": [1.5, 1.2],
+      },
+    },
+    {
+      id: "route-coolest",
+      type: "line",
+      source: ROUTE_SOURCE,
+      filter: isKind("coolest"),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ROUTE_COLOR.coolest[scheme], "line-width": width(3) },
+    },
+    {
+      id: "route-points",
+      type: "circle",
+      source: ROUTE_POINTS_SOURCE,
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 5, 17, 8],
+        "circle-color": ["match", ["get", "kind"], "start", SURFACE[scheme], ROUTE_COLOR.coolest[scheme]],
+        "circle-stroke-color": ROUTE_COLOR.coolest[scheme],
+        "circle-stroke-width": 3,
+      },
+    },
+  ];
+}
+
+export function buildStyle(
+  scheme: Scheme,
+  model: CostModel | null,
+  profile: HeatProfile,
+  relief: Relief,
+): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(mode, meta, scheme);
+  const [glow, edges, nodes] = graphLayers(model, scheme, profile, relief);
   return {
     version: 8,
     glyphs: GLYPHS,
@@ -179,7 +238,10 @@ export function buildStyle(scheme: Scheme, mode: ColorMode, meta: GraphMeta): St
       ...BASEMAP_SOURCE,
       "graph-edges": { type: "geojson", data: EDGES_URL, promoteId: "id" },
       "graph-nodes": { type: "geojson", data: NODES_URL, promoteId: "id" },
+      // filled by MapView with the route comparison
+      [ROUTE_SOURCE]: { type: "geojson", data: emptyCollection() },
+      [ROUTE_POINTS_SOURCE]: { type: "geojson", data: emptyCollection() },
     },
-    layers: [...below, glow, edges, ...above, nodes],
+    layers: [...below, glow, edges, ...above, nodes, ...routeLayers(scheme)],
   };
 }

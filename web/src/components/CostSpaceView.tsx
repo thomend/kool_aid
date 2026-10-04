@@ -1,17 +1,18 @@
-// The cost-space view: the graph laid out so that on-screen edge length equals
-// cost, drawn with deck.gl on a plain canvas in metres. `t` morphs every vertex
-// between its geographic (0) and cost-space (1) position.
+// The cost-space view: the network warped by the heat cartogram, drawn with
+// deck.gl on a plain canvas in metres. `t` morphs every vertex between its
+// geographic (0) and cost-space (1) position.
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import DeckGL, { type DeckGLRef } from "@deck.gl/react";
 import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl/core";
-import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
-import type { CostSpaceData, GraphMeta } from "../api";
+import { PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
+import type { CostSpaceData, GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, categoryOf, type ColorMode } from "../map/style";
+import { ACCENT, NO_DATA, ROUTE_COLOR, categoryOf } from "../map/style";
+import { heatFactor, referenceMedian } from "../costModel";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
-import { formatHighway, formatLength, formatPet } from "../format";
+import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
 
 export interface CostSpaceHandle {
@@ -29,9 +30,10 @@ interface Props {
   data: CostSpaceData;
   meta: GraphMeta;
   scheme: Scheme;
-  mode: ColorMode;
   t: number;
   selection: Selection;
+  /** Route comparison to draw, if any. */
+  routes: RouteComparison | null;
   onSelect: (s: Selection) => void;
 }
 
@@ -58,9 +60,25 @@ const CONTROLLER = {
 };
 
 const PALETTE = {
-  light: { water: "#a9d2f3", label: "#6e6e73", halo: "#f4f2ee", surface: "#ffffff", stroke: "#3a3a3c" },
-  dark: { water: "#22384f", label: "#8e8e93", halo: "#1b1c1f", surface: "#2c2c2e", stroke: "#d1d1d6" },
+  light: {
+    water: "#a9d2f3",
+    label: "#6e6e73",
+    halo: "#f4f2ee",
+    surface: "#ffffff",
+    stroke: "#3a3a3c",
+    grid: [60, 60, 67, 46],
+  },
+  dark: {
+    water: "#22384f",
+    label: "#8e8e93",
+    halo: "#1b1c1f",
+    surface: "#2c2c2e",
+    stroke: "#d1d1d6",
+    grid: [235, 235, 245, 40],
+  },
 } as const;
+
+const CELL_OPACITY = { light: 0.22, dark: 0.28 } as const;
 
 const RIVER_WIDTH_M: Record<string, number> = { Rhein: 190, Wiese: 25, Birs: 30, Birsig: 8 };
 
@@ -76,8 +94,75 @@ function prepare(geo: number[], cost: number[]) {
   return { geo: g, delta: d };
 }
 
+type Prepared = ReturnType<typeof prepareData>;
+
+function prepareData(data: CostSpaceData) {
+  const e = data.edges;
+  const visibleNodes = data.nodes.node_type
+    .map((type, i) => (type === "junction" ? -1 : i))
+    .filter((i) => i >= 0);
+  const nodeGeo: number[] = [];
+  const nodeCost: number[] = [];
+  for (const i of visibleNodes) {
+    nodeGeo.push(data.nodes.geo[2 * i], data.nodes.geo[2 * i + 1]);
+    nodeCost.push(data.nodes.cost[2 * i], data.nodes.cost[2 * i + 1]);
+  }
+  const nodeIndex = new Map(data.nodes.ids.map((id, i) => [id, i]));
+  const edgeIndex = new Map(e.ids.map((id, i) => [id, i]));
+  const starts = Uint32Array.from([...e.start_indices, e.geo.length / 2]);
+  return {
+    edges: prepare(e.geo, e.cost),
+    starts,
+    nodes: prepare(nodeGeo, nodeCost),
+    allNodes: prepare(data.nodes.geo, data.nodes.cost),
+    visibleNodes,
+    nodeIndex,
+    edgeIndex,
+    rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
+    labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
+    grid: data.context.grid.map((l) => prepare(l.geo, l.cost)),
+    cells: data.context.cells.map((c) => prepare(c.geo, c.cost)),
+  };
+}
+
+// Cost-space positions part way (k) from one variant (profile, relief) to
+// another. All variants share the same geometry, only the deltas differ.
+function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
+  const mix = <T extends { geo: Float32Array; delta: Float32Array }>(a: T, b: T): T => {
+    const delta = new Float32Array(b.delta.length);
+    for (let i = 0; i < delta.length; i++) delta[i] = a.delta[i] + (b.delta[i] - a.delta[i]) * k;
+    return { ...b, delta };
+  };
+  return {
+    ...to,
+    edges: mix(from.edges, to.edges),
+    nodes: mix(from.nodes, to.nodes),
+    allNodes: mix(from.allNodes, to.allNodes),
+    rivers: to.rivers.map((r, i) => mix(from.rivers[i], r)),
+    labels: to.labels.map((l, i) => mix(from.labels[i], l)),
+    grid: to.grid.map((l, i) => mix(from.grid[i], l)),
+    cells: to.cells.map((c, i) => mix(from.cells[i], c)),
+  };
+}
+
+function sameShape(a: Prepared, b: Prepared) {
+  return (
+    a.edges.delta.length === b.edges.delta.length &&
+    a.allNodes.delta.length === b.allNodes.delta.length &&
+    a.nodes.delta.length === b.nodes.delta.length &&
+    a.rivers.length === b.rivers.length &&
+    a.labels.length === b.labels.length &&
+    a.grid.length === b.grid.length &&
+    a.grid.every((l, i) => l.delta.length === b.grid[i].delta.length) &&
+    a.cells.length === b.cells.length
+  );
+}
+
+const PROFILE_TRANSITION_MS = 900;
+const easeInOutCubic = (k: number) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
+
 export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpaceView(
-  { data, meta, scheme, mode, t, selection, onSelect },
+  { data, meta, scheme, t, selection, onSelect, routes },
   ref,
 ) {
   const container = useRef<HTMLDivElement>(null);
@@ -89,32 +174,38 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   );
 
   // ---------- static per-dataset arrays ----------
-  const prepared = useMemo(() => {
-    const e = data.edges;
-    const visibleNodes = data.nodes.node_type
-      .map((type, i) => (type === "junction" ? -1 : i))
-      .filter((i) => i >= 0);
-    const nodeGeo: number[] = [];
-    const nodeCost: number[] = [];
-    for (const i of visibleNodes) {
-      nodeGeo.push(data.nodes.geo[2 * i], data.nodes.geo[2 * i + 1]);
-      nodeCost.push(data.nodes.cost[2 * i], data.nodes.cost[2 * i + 1]);
-    }
-    const nodeIndex = new Map(data.nodes.ids.map((id, i) => [id, i]));
-    const edgeIndex = new Map(e.ids.map((id, i) => [id, i]));
-    const starts = Uint32Array.from([...e.start_indices, e.geo.length / 2]);
-    return {
-      edges: prepare(e.geo, e.cost),
-      starts,
-      nodes: prepare(nodeGeo, nodeCost),
-      allNodes: prepare(data.nodes.geo, data.nodes.cost),
-      visibleNodes,
-      nodeIndex,
-      edgeIndex,
-      rivers: data.context.lines.map((l) => ({ name: l.name, ...prepare(l.geo, l.cost) })),
-      labels: data.context.labels.map((l) => ({ name: l.name, kind: l.kind, ...prepare(l.geo, l.cost) })),
+  const target = useMemo(() => prepareData(data), [data]);
+
+  // A new variant is blended in from what was on screen
+  const shown = useRef<Prepared | null>(null);
+  const [transition, setTransition] = useState<{ to: Prepared; from: Prepared | null; k: number }>(
+    () => ({ to: target, from: null, k: 1 }),
+  );
+  if (transition.to !== target) {
+    const from = shown.current && sameShape(shown.current, target) ? shown.current : null;
+    setTransition({ to: target, from, k: from ? 0 : 1 });
+  }
+  useEffect(() => {
+    if (!transition.from || transition.k > 0) return;
+    let frame = 0;
+    const start = performance.now();
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / PROFILE_TRANSITION_MS);
+      setTransition((tr) => ({ ...tr, k: easeInOutCubic(k) }));
+      if (k < 1) frame = requestAnimationFrame(step);
     };
-  }, [data]);
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transition.to]);
+  const prepared = useMemo(
+    () =>
+      transition.from && transition.k < 1
+        ? blendPrepared(transition.from, transition.to, transition.k)
+        : transition.to,
+    [transition],
+  );
+  shown.current = prepared;
 
   // ---------- positions at the current morph state ----------
   const edgePositions = useMemo(
@@ -201,10 +292,33 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const palette = PALETTE[scheme];
   const accent = hexToRgba(ACCENT[scheme]);
 
+  // Heat factors of the profile and relief this layout was built for
+  const { profile, trees, fountains } = data.meta;
+  const model = meta.cost_model;
+  const factors = useMemo(() => {
+    const e = data.edges;
+    if (!model) return e.ids.map(() => 1);
+    const relief = { trees, fountains };
+    return e.ids.map((_, i) =>
+      heatFactor(model, profile, relief, e.heat_excess_sq_mean[i], e.shade_share[i], e.fountain_share[i]),
+    );
+  }, [data, model, profile, trees, fountains]);
   const edgeColors = useMemo(() => {
-    const color = edgeColorFn(mode, meta, scheme);
-    return data.edges.highway.map((h, i) => color(h, data.edges.walk_cost_m[i]));
-  }, [data, meta, mode, scheme]);
+    if (!model) return factors.map(() => hexToRgba(NO_DATA[scheme]));
+    const color = edgeColorFn(model, scheme, profile);
+    return factors.map((f) => color(f));
+  }, [factors, model, scheme, profile]);
+
+  // Cells take the street colour of the heat ratio their area stands for
+  // (area = ratio ^ exaggeration), so cells and streets share one legend
+  const cellColors = useMemo(() => {
+    if (!model) return data.context.cells.map(() => hexToRgba(NO_DATA[scheme]));
+    const color = edgeColorFn(model, scheme, profile);
+    const reference = referenceMedian(model, profile);
+    return data.context.cells.map((c) =>
+      color(reference * Math.pow(c.area_ratio, 1 / data.meta.exaggeration)),
+    );
+  }, [data, model, scheme, profile]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));
   const nodeRadius = (intersection: boolean) => {
@@ -220,7 +334,50 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       : edgePositions.subarray(prepared.starts[selectedEdge] * 2, prepared.starts[selectedEdge + 1] * 2);
   const selectedNode = selection?.kind === "node" ? positionOfNode(selection.id) : null;
 
+  // Routes: their edges at the current morph state, one path per edge
+  const routePaths = (kind: "shortest" | "coolest") =>
+    (routes?.[kind].edges ?? []).flatMap((id) => {
+      const i = prepared.edgeIndex.get(id);
+      return i === undefined
+        ? []
+        : [edgePositions.subarray(prepared.starts[i] * 2, prepared.starts[i + 1] * 2)];
+    });
+  const routeEnds = routes
+    ? [
+        { kind: "start", position: positionOfNode(routes.start.node) },
+        { kind: "end", position: positionOfNode(routes.end.node) },
+      ].filter((p): p is { kind: string; position: [number, number] } => p.position !== null)
+    : [];
+  const routeWidth = edgeWidthAtZoom(mapZoom);
+
   const layers = [
+    // Cells tinted by how much bigger (red) or smaller (teal) they feel; they
+    // fade in with the morph, as on the map they mean nothing
+    new SolidPolygonLayer({
+      id: "cells",
+      data: prepared.cells.map((c, i) => ({
+        polygon: lerp(c.geo, c.delta, t, new Float32Array(c.geo.length)),
+        i,
+      })),
+      getPolygon: (d) => d.polygon,
+      positionFormat: "XY",
+      getFillColor: (d) => cellColors[d.i],
+      opacity: CELL_OPACITY[scheme] * t,
+      visible: t > 0.01,
+      updateTriggers: { getFillColor: [cellColors] },
+    }),
+    // Regular grid, warped like the network: stretched cells are hotter than
+    // typical, squeezed cells cooler
+    new PathLayer({
+      id: "grid",
+      data: prepared.grid.map((l) => lerp(l.geo, l.delta, t, new Float32Array(l.geo.length))),
+      getPath: (d) => d,
+      positionFormat: "XY",
+      getColor: palette.grid as unknown as [number, number, number, number],
+      getWidth: 1,
+      widthUnits: "pixels",
+      updateTriggers: { getColor: scheme },
+    }),
     new PathLayer({
       id: "rivers",
       data: prepared.rivers.map((r) => ({
@@ -256,7 +413,7 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       autoHighlight: true,
       highlightColor: [accent[0], accent[1], accent[2], 255],
-      updateTriggers: { getColor: [mode, scheme] },
+      updateTriggers: { getColor: [scheme, edgeColors] },
     }),
     selectedPath &&
       new PathLayer({
@@ -294,6 +451,59 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
       pickable: true,
       updateTriggers: { getRadius: Math.round(mapZoom * 4), getFillColor: scheme, getLineColor: scheme },
     }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-casing",
+        data: [...routePaths("shortest"), ...routePaths("coolest")],
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(palette.surface, 230),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 2.6 + 4,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-shortest",
+        data: routePaths("shortest"),
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(ROUTE_COLOR.shortest[scheme]),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 1.1 + 1.5,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new PathLayer<Float32Array>({
+        id: "route-coolest",
+        data: routePaths("coolest"),
+        getPath: (d) => d,
+        positionFormat: "XY",
+        getColor: hexToRgba(ROUTE_COLOR.coolest[scheme]),
+        getWidth: 1,
+        widthUnits: "pixels",
+        widthScale: routeWidth * 1.5 + 2,
+        capRounded: true,
+        jointRounded: true,
+      }),
+    routes &&
+      new ScatterplotLayer({
+        id: "route-points",
+        data: routeEnds,
+        getPosition: (d) => d.position,
+        radiusUnits: "pixels",
+        getRadius: mapZoom > 16 ? 8 : 6,
+        getFillColor: (d) => hexToRgba(d.kind === "start" ? palette.surface : ROUTE_COLOR.coolest[scheme]),
+        getLineColor: hexToRgba(ROUTE_COLOR.coolest[scheme]),
+        stroked: true,
+        lineWidthUnits: "pixels",
+        getLineWidth: 3,
+        updateTriggers: { getFillColor: scheme, getLineColor: scheme },
+      }),
     selectedNode &&
       new ScatterplotLayer({
         id: "selected-node",
@@ -348,7 +558,8 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
         detail: [
-          formatLength(data.edges.walk_cost_m[i]) + " cost",
+          formatLength(data.edges.length_m[i] * factors[i]) + " cost",
+          ...(model ? [formatHeatRatio(factors[i], referenceMedian(model, profile))] : []),
           formatHighway(data.edges.highway[i]).toLowerCase(),
           ...(pet ? [pet] : []),
         ].join(" · "),
@@ -426,7 +637,8 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
           <div className="tooltip-detail">{hover.detail}</div>
         </div>
       )}
-      <ScaleBar zoom={viewState.zoom} />
+      {/* distances only hold on the unwarped map */}
+      {t < 0.02 && <ScaleBar zoom={viewState.zoom} />}
     </div>
   );
 });
@@ -464,9 +676,9 @@ function ScaleBar({ zoom }: { zoom: number }) {
   const candidates = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   const metres = candidates.find((m) => m * pxPerMetre >= 70) ?? 5000;
   return (
-    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)} of walking cost`}>
+    <div className="scale-bar glass" aria-label={`Scale: ${formatLength(metres)}`}>
       <span className="scale-line" style={{ width: metres * pxPerMetre }} />
-      <span>{formatLength(metres)} of cost</span>
+      <span>{formatLength(metres)}</span>
     </div>
   );
 }

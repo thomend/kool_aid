@@ -1,28 +1,27 @@
 // Colours as RGBA arrays for deck.gl, matching the MapLibre style.
 
-import type { GraphMeta } from "./api";
+import type { CostModel } from "./api";
 import type { Scheme } from "./map/basemap";
-import { categoryOf, costStops, type ColorMode } from "./map/style";
+import { heatStops } from "./map/style";
+import type { HeatProfile } from "./profiles";
 
-export type RGBA = [number, number, number, number];
+type RGBA = [number, number, number, number];
 
 export function hexToRgba(hex: string, alpha = 255): RGBA {
   const v = parseInt(hex.slice(1), 16);
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255, alpha];
 }
 
-export function edgeColorFn(mode: ColorMode, meta: GraphMeta, scheme: Scheme) {
-  if (mode === "type") {
-    return (highway: string, _cost: number) => hexToRgba(categoryOf(highway).color[scheme]);
-  }
-  const stops = costStops(meta, scheme).map(([v, c]) => [v, hexToRgba(c)] as const);
-  return (_highway: string, cost: number): RGBA => {
-    if (cost <= stops[0][0]) return stops[0][1];
+/** Colour of an edge from its heat factor (cost per metre), as in the map style. */
+export function edgeColorFn(model: CostModel, scheme: Scheme, profile: HeatProfile) {
+  const stops = heatStops(model, scheme, profile).map(([v, c]) => [v, hexToRgba(c)] as const);
+  return (factor: number): RGBA => {
+    if (factor <= stops[0][0]) return stops[0][1];
     for (let i = 1; i < stops.length; i++) {
       const [v1, c1] = stops[i];
-      if (cost <= v1) {
+      if (factor <= v1) {
         const [v0, c0] = stops[i - 1];
-        const t = (cost - v0) / (v1 - v0);
+        const t = (factor - v0) / (v1 - v0);
         return c0.map((c, k) => Math.round(c + (c1[k] - c) * t)) as RGBA;
       }
     }

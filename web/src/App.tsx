@@ -1,10 +1,21 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { fetchCostSpace, fetchMeta, type CostSpaceData, type GraphMeta, type NodeDetail } from "./api";
+import {
+  fetchCostSpace,
+  fetchMeta,
+  fetchRoute,
+  type CostSpaceData,
+  type GraphMeta,
+  type NodeDetail,
+  type RouteComparison,
+} from "./api";
+import { RouteSection, type RoutePicking } from "./components/RouteSection";
 import type { Scheme } from "./map/basemap";
-import type { ColorMode } from "./map/style";
+import { DEFAULT_PROFILE, type HeatProfile } from "./profiles";
+import { FULL_RELIEF, reliefKey, type Relief } from "./costModel";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
 import { Panel } from "./components/Panel";
+import { InfoPopup } from "./components/InfoPopup";
 import { Inspector } from "./components/Inspector";
 import type { CostSpaceHandle } from "./components/CostSpaceView";
 import { MorphSlider } from "./components/MorphSlider";
@@ -12,6 +23,8 @@ import { SegmentedControl } from "./components/SegmentedControl";
 import { MinusIcon, MoonIcon, PlusIcon, RecenterIcon, SunIcon } from "./components/Icons";
 
 type View = "geographic" | "cost-space";
+
+const variantKey = (p: HeatProfile, r: Relief) => `${p}|${reliefKey(r)}`;
 
 // deck.gl is only needed for the cost-space view, so load it on demand
 const CostSpaceView = lazy(() =>
@@ -40,9 +53,37 @@ export default function App() {
   const [meta, setMeta] = useState<GraphMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [graphLoaded, setGraphLoaded] = useState(false);
-  const [mode, setMode] = useState<ColorMode>("cost");
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [profile, setProfile] = useState<HeatProfile>(DEFAULT_PROFILE);
+  const [relief, setRelief] = useState<Relief>(FULL_RELIEF);
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
+
+  // Route comparison: pick a start and a destination on the map
+  const [picking, setPicking] = useState<RoutePicking>("off");
+  const [routeEnds, setRouteEnds] = useState<{ start: [number, number]; end: [number, number] | null } | null>(
+    null,
+  );
+  const [routes, setRoutes] = useState<RouteComparison | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const pick = (lon: number, lat: number) => {
+    if (picking === "start") {
+      setRouteEnds({ start: [lon, lat], end: null });
+      setRoutes(null);
+      setRouteError(null);
+      setPicking("end");
+    } else if (picking === "end" && routeEnds) {
+      setRouteEnds({ ...routeEnds, end: [lon, lat] });
+      setPicking("off");
+    }
+  };
+  const clearRoutes = () => {
+    setPicking("off");
+    setRouteEnds(null);
+    setRoutes(null);
+    setRouteError(null);
+  };
   const focusNext = useRef(false);
   const mapRef = useRef<MapLibreMap | null>(null);
 
@@ -54,6 +95,12 @@ export default function App() {
     setCostReady(handle !== null);
   }, []);
   const [costData, setCostData] = useState<CostSpaceData | null>(null);
+  // One cost space per profile and relief, fetched once each
+  const costCache = useRef(new Map<string, Promise<CostSpaceData>>());
+  const variantRef = useRef(variantKey(profile, relief));
+  variantRef.current = variantKey(profile, relief);
+  const hasCostData = useRef(false);
+  hasCostData.current = costData !== null;
   const [costStatus, setCostStatus] = useState<"idle" | "loading" | "error">("idle");
   const [costVisible, setCostVisible] = useState(false);
   const [t, setT] = useState(0);
@@ -84,22 +131,47 @@ export default function App() {
     [setMorph],
   );
 
+  // Fetches (once per variant) and shows the cost space of a profile and relief
+  const loadCostSpace = useCallback((p: HeatProfile, r: Relief) => {
+    const key = variantKey(p, r);
+    let request = costCache.current.get(key);
+    if (!request) {
+      request = fetchCostSpace(p, r);
+      costCache.current.set(key, request);
+      request.catch(() => costCache.current.delete(key));
+    }
+    setCostStatus("loading");
+    request
+      .then((d) => {
+        if (variantRef.current !== key) return; // overtaken by a later switch
+        setCostData(d);
+        setCostStatus("idle");
+      })
+      .catch(() => {
+        if (variantRef.current !== key) return;
+        setCostStatus("error");
+        // without any cost space to show, fall back to the map
+        if (!hasCostData.current) setView("geographic");
+      });
+  }, []);
+  const changeVariant = (p: HeatProfile, r: Relief) => {
+    setProfile(p);
+    setRelief(r);
+    variantRef.current = variantKey(p, r);
+    if (view === "cost-space") loadCostSpace(p, r);
+  };
+  const changeProfile = (next: HeatProfile) => next !== profile && changeVariant(next, relief);
+  const changeRelief = (next: Relief) => changeVariant(profile, next);
+  const shownVariant = costData
+    ? variantKey(costData.meta.profile, { trees: costData.meta.trees, fountains: costData.meta.fountains })
+    : null;
+
   const switchView = (next: View) => {
     if (next === view) return;
     setView(next);
     if (next === "cost-space") {
-      if (!costData && costStatus !== "loading") {
-        setCostStatus("loading");
-        fetchCostSpace()
-          .then((d) => {
-            setCostData(d);
-            setCostStatus("idle");
-          })
-          .catch(() => {
-            setCostStatus("error");
-            setView("geographic");
-          });
-      }
+      setPicking("off"); // picking only works on the map
+      if (shownVariant !== variantKey(profile, relief)) loadCostSpace(profile, relief);
       return; // entering happens in the effect below, once the view is mounted
     }
     // Back to geography: unmorph, then hand the camera over to the map
@@ -148,8 +220,33 @@ export default function App() {
     return () => ctrl.abort();
   }, []);
 
+  // Routes for the picked points, again whenever the profile or relief changes
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
+    if (!routeEnds?.end) return;
+    const ctrl = new AbortController();
+    setRouteLoading(true);
+    setRouteError(null);
+    fetchRoute(routeEnds.start, routeEnds.end, profile, relief, ctrl.signal)
+      .then((r) => {
+        setRoutes(r);
+        setRouteLoading(false);
+      })
+      .catch((e: Error) => {
+        if (e.name === "AbortError") return;
+        setRoutes(null);
+        setRouteError(e.message);
+        setRouteLoading(false);
+      });
+    return () => ctrl.abort();
+  }, [routeEnds, profile, relief]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setInfoOpen(false);
+      setSelection(null);
+      setPicking("off");
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -198,7 +295,11 @@ export default function App() {
           <MapView
           meta={meta}
           scheme={scheme}
-          mode={mode}
+          profile={profile}
+          relief={relief}
+          routes={routes}
+          picking={picking !== "off"}
+          onPick={pick}
           selection={selection}
           onSelect={select}
           onMap={(m) => (mapRef.current = m)}
@@ -215,10 +316,10 @@ export default function App() {
             data={costData}
             meta={meta}
             scheme={scheme}
-            mode={mode}
-            t={t}
+              t={t}
               selection={selection}
               onSelect={select}
+              routes={routes}
             />
           </Suspense>
         </div>
@@ -228,9 +329,31 @@ export default function App() {
         <Panel
           meta={meta}
           scheme={scheme}
-          mode={mode}
-          onModeChange={setMode}
+          profile={profile}
+          onProfileChange={changeProfile}
+          relief={relief}
+          onReliefChange={changeRelief}
+          infoOpen={infoOpen}
+          onToggleInfo={() => setInfoOpen((o) => !o)}
+        >
+          <RouteSection
+            scheme={scheme}
+            picking={picking}
+            onPick={() => setPicking(picking === "off" ? "start" : "off")}
+            onClear={clearRoutes}
+            canPick={view === "geographic" && !costVisible}
+            routes={routes}
+            loading={routeLoading}
+            error={routeError}
+          />
+        </Panel>
+      )}
+
+      {meta && infoOpen && (
+        <InfoPopup
+          meta={meta}
           layout={view === "cost-space" ? (costData?.meta ?? null) : null}
+          onClose={() => setInfoOpen(false)}
         />
       )}
 
@@ -272,8 +395,15 @@ export default function App() {
         </button>
       </div>
 
-      {selection && (
-        <Inspector selection={selection} scheme={scheme} onSelect={select} onNodeLoaded={onNodeLoaded} />
+      {meta && selection && (
+        <Inspector
+          selection={selection}
+          meta={meta}
+          profile={profile}
+          relief={relief}
+          onSelect={select}
+          onNodeLoaded={onNodeLoaded}
+        />
       )}
 
       {costVisible && view === "cost-space" && (
