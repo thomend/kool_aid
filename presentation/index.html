@@ -410,10 +410,10 @@
             <div>
               <div class="section-label">The problem</div>
               <ul>
-                <li>Basel is already ~2°C warmer than pre-industrial times</li>
+                <li>Basel summers are getting hotter, and heat hits people on foot directly</li>
+                <li>500 m in sun is far harder than 500 m in shade, sometimes dangerous for the elderly, children or anyone with a heart condition</li>
                 <li>A binding heat analysis exists (Stadtklimaanalyse), but only as a static, city-wide map</li>
-                <li>It isn't matched to the streets people actually walk every day</li>
-                <li>No one has pointed at a route and said <em>"this one overheats"</em></li>
+                <li>For <strong>city planners</strong>: no way to point at a route and say <em>"this one overheats"</em></li>
               </ul>
             </div>
             <div>
@@ -421,7 +421,7 @@
               <ul>
                 <li>Model Basel's <strong>walkable network</strong> as a graph</li>
                 <li>Nodes = intersections, edges = path segments</li>
-                <li>Each edge carries a <strong>cost</strong>: length, stretched by heat and eased by shade and fountains</li>
+                <li>Each edge carries a <strong>cost</strong>: length and slope, increased by heat and eased by shade and fountains</li>
                 <li>Make the hottest streets visible and explorable</li>
               </ul>
             </div>
@@ -441,30 +441,32 @@
               <ul class="source-list">
                 <li>
                   <span class="swatch"></span>
-                  <div>
-                    <strong>OpenStreetMap</strong>: walkable ways, rivers, district names
-                    <span class="footnote">Only source with the actual street-level pedestrian network · ODbL licence</span>
-                  </div>
+                  <div><strong>OpenStreetMap</strong>: ways, rivers, names, bridges &amp; tunnels</div>
                 </li>
                 <li>
                   <span class="swatch"></span>
-                  <div>
-                    <strong>Stadtklimaanalyse Basel-Stadt</strong> (geo.bs.ch): PET heat-stress raster, today &amp; 2030, 10&nbsp;m cells
-                    <span class="footnote">Official, binding-for-planning dataset at the resolution a single street needs</span>
-                  </div>
+                  <div><strong>Stadtklimaanalyse</strong> (geo.bs.ch): PET heat raster, 10&nbsp;m</div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>Tree cadastre &amp; fountains</strong> (data.bs.ch): shade and water</div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>swissALTI3D</strong> (swisstopo): 2&nbsp;m terrain, for slope</div>
                 </li>
               </ul>
               <div class="todo-flag">
-                Planned next: Baumkataster tree canopy cover, to factor shade into the heat cost model.
+                Planned next: the 2030 heat scenario, already in the data.
               </div>
             </div>
             <div>
               <div class="section-label">Approach</div>
               <ul>
-                <li><strong>Fetch</strong>: walkable ways via Overpass API, heat rasters (GeoTIFF) direct from geo.bs.ch</li>
-                <li><strong>Georaster join</strong>: sample each edge every metre along its geometry, reprojected to LV95, into a length-weighted mean PET</li>
-                <li><strong>Store</strong>: one <strong>DuckDB</strong> file holds the graph (vector) and the sampled heat cost (raster) side by side</li>
-                <li>Reproducible scripts instead of notebooks, rerun end-to-end whenever the source data changes</li>
+                <li><strong>Fetch</strong> from each source's API or download</li>
+                <li><strong>Join</strong> every edge to PET, shade, fountains and slope</li>
+                <li><strong>Store</strong> it all in one <strong>DuckDB</strong> file</li>
+                <li>Scripts, not notebooks: rerun end-to-end on new data</li>
               </ul>
             </div>
           </div>
@@ -485,9 +487,9 @@
           <ul>
             <li><strong>Geographic view</strong>: the graph on a calm map, edges coloured by cost</li>
             <li><strong>Cost-space view</strong>: same graph, redrawn so on-screen length equals cost</li>
-            <li>Click any node or edge to inspect it; a slider morphs between the two</li>
+            <li>Click a street for its cost breakdown, or an intersection to compare the streets that meet there</li>
+            <li><strong>Compare routes</strong>: shortest versus coolest, and the extra strain the cool one avoids</li>
           </ul>
-          <p class="footnote mono">→ switching to localhost:5173 now</p>
         </div>
       </section>
 
@@ -495,18 +497,16 @@
       <section>
         <div class="glass-card">
           <div class="panel-header">
-            <h2 class="slide-title">How we built it</h2>
+            <h2 class="slide-title">How we built it, and what we learned</h2>
           </div>
           <div class="cols">
             <div>
-              <div class="section-label">Who &amp; why</div>
+              <div class="section-label">Who</div>
               <ul>
-                <li>Team Kool Aid, [names / backgrounds]</li>
-                <li>Motivation: [add team motivation]</li>
+                <li>Joel Gschwind, Software Engineer</li>
+                <li>Sinan Laubscher, Data &amp; Analytics Intern</li>
+                <li>Thomas Mendelin, Data Product Engineer</li>
               </ul>
-              <div class="todo-flag">
-                Methodology details to update once the latest teammate pull is merged.
-              </div>
             </div>
             <div>
               <div class="section-label">How we worked</div>
@@ -519,10 +519,11 @@
             </div>
           </div>
           <div class="pill-row">
-            <span class="pill">devcontainer</span>
-            <span class="pill">FastAPI + DuckDB</span>
-            <span class="pill">React + MapLibre + deck.gl</span>
-            <span class="pill">AI-guided, human-architected</span>
+            <span class="pill">Python + DuckDB</span>
+            <span class="pill">FastAPI</span>
+            <span class="pill">React + TypeScript</span>
+            <span class="pill">MapLibre + deck.gl</span>
+            <span class="pill">Devcontainer</span>
           </div>
         </div>
       </section>
