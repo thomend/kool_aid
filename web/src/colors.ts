@@ -5,7 +5,7 @@ import type { Scheme } from "./map/basemap";
 import { heatStops } from "./map/style";
 import type { HeatProfile } from "./profiles";
 
-type RGBA = [number, number, number, number];
+export type RGBA = [number, number, number, number];
 
 export function hexToRgba(hex: string, alpha = 255): RGBA {
   const v = parseInt(hex.slice(1), 16);

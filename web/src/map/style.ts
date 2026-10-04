@@ -7,8 +7,9 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type CostModel } from "../api";
-import { referenceMedian, type Relief } from "../costModel";
+import { EDGES_URL, FACTORS_URL, NODES_URL, type CostModel } from "../api";
+import { FACTOR_COLOR, factorIconId } from "./icons";
+import { referenceMedian, type Factors } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
@@ -23,9 +24,9 @@ const EDGE_CATEGORIES: { label: string; highways: string[] }[] = [
 export const categoryOf = (highway: string) =>
   EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ?? EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1];
 
-// Diverging heat scale: heat cost per metre relative to a fixed reference, the
-// median without trees and fountains, so switching them on visibly cools streets
-// down. Teal, not blue, so it never reads as the blue selection accent.
+// Diverging scale: cost per metre relative to a fixed reference, the median
+// without trees, fountains and slope, so switching factors on visibly changes
+// the streets. Teal, not blue, so it never reads as the blue selection accent.
 export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
 const HEAT_RAMP: Record<Scheme, string[]> = {
   light: ["#0b8a92", "#62bcc4", "#c4c4c9", "#f39a5b", "#e0352b"],
@@ -39,11 +40,11 @@ export function heatStops(model: CostModel, scheme: Scheme, profile: HeatProfile
   return HEAT_RATIOS.map((r, i) => [r * reference, HEAT_RAMP[scheme][i]]);
 }
 
-/** costModel.heatFactor as a MapLibre expression over an edge's properties. */
-function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Relief): ExpressionSpecification {
+/** costModel.costFactor as a MapLibre expression over an edge's properties. */
+function costFactorExpression(model: CostModel, profile: HeatProfile, factors: Factors): ExpressionSpecification {
   const relieved = (on: boolean, effect: number, key: string): ExpressionSpecification | number =>
     on ? ["-", 1, ["*", effect, ["coalesce", ["get", key], 0]]] : 1;
-  return [
+  const heat: ExpressionSpecification = [
     "+",
     1,
     [
@@ -51,12 +52,19 @@ function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Re
       [
         "*",
         ["get", "heat_excess_sq_mean"],
-        relieved(relief.trees, model.shade_effect, "shade_share"),
-        relieved(relief.fountains, model.fountain_effect, "fountain_share"),
+        relieved(factors.trees, model.shade_effect, "shade_share"),
+        relieved(factors.fountains, model.fountain_effect, "fountain_share"),
       ],
       model.scale_c[profile] ** 2,
     ],
   ];
+  if (!factors.slope) return heat;
+  const slope: ExpressionSpecification = [
+    "+",
+    1,
+    ["*", model.slope_weight[profile], ["coalesce", ["get", "slope_excess"], 0]],
+  ];
+  return ["*", slope, heat];
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
@@ -67,7 +75,7 @@ function edgeColor(
   model: CostModel | null,
   scheme: Scheme,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): ExpressionSpecification | string {
   if (!model) return NO_DATA[scheme];
   return [
@@ -76,7 +84,7 @@ function edgeColor(
     [
       "interpolate",
       ["linear"],
-      heatFactorExpression(model, profile, relief),
+      costFactorExpression(model, profile, factors),
       ...heatStops(model, scheme, profile).flat(),
     ],
     NO_DATA[scheme],
@@ -109,7 +117,7 @@ function graphLayers(
   model: CostModel | null,
   scheme: Scheme,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): LayerSpecification[] {
   return [
     {
@@ -130,7 +138,7 @@ function graphLayers(
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, relief)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, factors)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -163,6 +171,74 @@ function graphLayers(
         ],
         "circle-opacity": ["interpolate", ["linear"], ["zoom"], 14.5, 0, 15.2, 1],
         "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], 14.5, 0, 15.2, 1],
+      },
+    },
+  ];
+}
+
+// Cost factors on the map, each shown while its toggle is on: trees, fountains
+// and steep streets as icons from ICON_MIN_ZOOM (trees as dots before)
+export const FACTOR_LAYERS = ["factor-trees", "factor-fountains"];
+const STEEP_GRADE = 0.06;
+const ICON_MIN_ZOOM = 16.5;
+
+function factorLayers(scheme: Scheme, factors: Factors): LayerSpecification[] {
+  const visible = (on: boolean) => (on ? "visible" : "none") as "visible" | "none";
+  const isKind = (kind: string): ExpressionSpecification => ["==", ["get", "kind"], kind];
+  const iconSize: ExpressionSpecification = ["interpolate", ["linear"], ["zoom"], ICON_MIN_ZOOM, 0.6, 19, 1];
+  return [
+    {
+      id: "factor-tree-dots",
+      type: "circle",
+      source: "factors",
+      filter: isKind("tree"),
+      minzoom: 14,
+      maxzoom: ICON_MIN_ZOOM,
+      layout: { visibility: visible(factors.trees) },
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 1.2, ICON_MIN_ZOOM, 2.5],
+        "circle-color": FACTOR_COLOR.tree[scheme],
+        "circle-opacity": 0.75,
+      },
+    },
+    {
+      id: "factor-trees",
+      type: "symbol",
+      source: "factors",
+      filter: isKind("tree"),
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.trees),
+        "icon-image": factorIconId("tree", scheme),
+        "icon-size": iconSize,
+        "icon-padding": 0,
+      },
+    },
+    {
+      id: "factor-slope",
+      type: "symbol",
+      source: "graph-edges",
+      filter: ["all", isMainComponent, [">=", ["coalesce", ["get", "grade_mean"], 0], STEEP_GRADE]],
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.slope),
+        "symbol-placement": "line-center",
+        "icon-image": factorIconId("slope", scheme),
+        "icon-size": iconSize,
+        "icon-rotation-alignment": "viewport",
+      },
+    },
+    {
+      id: "factor-fountains",
+      type: "symbol",
+      source: "factors",
+      filter: isKind("fountain"),
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.fountains),
+        "icon-image": factorIconId("fountain", scheme),
+        "icon-size": iconSize,
+        "icon-allow-overlap": true,
       },
     },
   ];
@@ -227,10 +303,10 @@ export function buildStyle(
   scheme: Scheme,
   model: CostModel | null,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(model, scheme, profile, relief);
+  const [glow, edges, nodes] = graphLayers(model, scheme, profile, factors);
   return {
     version: 8,
     glyphs: GLYPHS,
@@ -238,10 +314,11 @@ export function buildStyle(
       ...BASEMAP_SOURCE,
       "graph-edges": { type: "geojson", data: EDGES_URL, promoteId: "id" },
       "graph-nodes": { type: "geojson", data: NODES_URL, promoteId: "id" },
+      factors: { type: "geojson", data: FACTORS_URL },
       // filled by MapView with the route comparison
       [ROUTE_SOURCE]: { type: "geojson", data: emptyCollection() },
       [ROUTE_POINTS_SOURCE]: { type: "geojson", data: emptyCollection() },
     },
-    layers: [...below, glow, edges, ...above, nodes, ...routeLayers(scheme)],
+    layers: [...below, glow, edges, ...above, nodes, ...factorLayers(scheme, factors), ...routeLayers(scheme)],
   };
 }

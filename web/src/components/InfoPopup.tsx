@@ -1,5 +1,6 @@
-import type { GraphMeta, LayoutMeta } from "../api";
-import { formatLength } from "../format";
+import type { CostModel, GraphMeta, LayoutMeta } from "../api";
+import { NO_FACTORS, costFactor, referenceMedian } from "../costModel";
+import { PROFILES } from "../profiles";
 import { CloseIcon } from "./Icons";
 
 interface Props {
@@ -9,7 +10,10 @@ interface Props {
   onClose: () => void;
 }
 
+const times = (v: number) => `${v < 1 ? v.toFixed(2) : v.toFixed(1).replace(/\.0$/, "")}×`;
+
 export function InfoPopup({ meta, layout, onClose }: Props) {
+  const model = meta.cost_model;
   return (
     <section className="info-popup glass" role="dialog" aria-label="About this map">
       <button className="icon-button close" aria-label="Close" onClick={onClose}>
@@ -17,65 +21,88 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
       </button>
       <h3>About this map</h3>
       <p className="small">
-        Walking cost is length stretched by heat stress (PET), so hot, shadeless streets cost
-        more to walk than cool, comfortable ones. Edges are coloured by heat cost per metre
-        compared with a typical metre of Basel without trees and fountains: red streets are
-        hotter than that, teal ones cooler.
+        Walking cost is the length of a street, made longer by heat (PET above 29 °C) and slope,
+        and shorter by tree shade and fountains.
       </p>
+
+      <p className="section-label">Colours</p>
       <p className="small">
-        Heat only counts above 29 °C PET, where moderate heat stress begins, and then grows
-        quadratically. <strong>Heat sensitivity</strong> sets how steeply: <em>low</em> for fit
-        adults on short trips, <em>high</em> for elderly people, small children or anyone with a
-        heart condition.
+        Cost per metre, compared with a typical metre: <strong>red</strong> is harder,{" "}
+        <strong>teal</strong> easier.
+        {model && <> {typicalMetre(model)}</>}
       </p>
+
+      <p className="section-label">Heat sensitivity</p>
       <p className="small">
-        <strong>Tree shade</strong> softens the heat: the part of a street under a public tree's
-        crown counts only half of its extra heat cost. <strong>Fountains</strong> offer a drink
-        and a cool-down: within 100 m of one, a street loses a fifth of its extra heat cost.
-        Switch either off under <em>Count in</em> to see what they change: colours and the cost
-        space are always measured against Basel without trees and fountains, so streets they
-        help turn cooler and the city draws together.
+        How strongly heat counts. <em>High</em> stands for elderly people, small children and
+        heart conditions.{model && <> {sunnyStreet(model)}</>}
       </p>
+
+      <p className="section-label">Count in</p>
+      <ul className="info-list small">
+        <li>
+          <strong>Tree shade</strong> halves the heat cost under a crown.
+        </li>
+        <li>
+          <strong>Fountains</strong> take 20 % off the heat cost within 100 m.
+        </li>
+        <li>
+          <strong>Slope</strong> adds walking time: +19 % at 5 %, +42 % at 10 % (half on low,
+          double on high).
+        </li>
+      </ul>
+
+      <p className="section-label">Compare routes</p>
+      <p className="small">The shortest and the coolest walk between two points.</p>
+
       {layout ? (
         <CostSpaceNote layout={layout} />
       ) : (
         <p className="footnote">
-          {meta.component_count - 1} small disconnected pieces are shown faded. Zoom in to see
-          intersections.
+          Faded: {meta.component_count - 1} disconnected pieces. Zoom in for intersections and
+          factor icons.
         </p>
       )}
     </section>
   );
 }
 
+/** What "typical" is: the median metre of the network without trees, fountains and slope. */
+function typicalMetre(model: CostModel): string {
+  const costs = PROFILES.map(({ key }) => times(referenceMedian(model, key)));
+  // the PET at which a sunny, flat street costs the reference (the same for every profile)
+  const scale = model.scale_c[PROFILES[0].key];
+  const pet = model.pet_threshold_c + scale * Math.sqrt(referenceMedian(model, PROFILES[0].key) - 1);
+  return (
+    `Typical is the median of Basel's network without trees, fountains and slope: like a sunny, ` +
+    `flat street at about ${Math.round(pet)} °C PET, costing ${costs.join(" / ")} its length ` +
+    `(low / medium / high). So a street can cost more than its length and still be below typical.`
+  );
+}
+
+/** "A sunny, flat street at 41 °C PET costs 1.6× / 2× / 3.3× its length (low / medium / high)." */
+function sunnyStreet(model: CostModel): string {
+  const excess = (41 - model.pet_threshold_c) ** 2;
+  const factors = PROFILES.map(({ key }) => costFactor(model, key, NO_FACTORS, excess, 0, 0, 0));
+  return `A sunny, flat street at 41 °C PET costs ${factors.map(times).join(" / ")} its length (low / medium / high).`;
+}
+
 function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
-  const times = (v: number) => `${v < 1 ? v.toFixed(2) : v.toFixed(1)}×`;
   return (
     <>
       <p className="section-label">Cost space</p>
-      <p className="small">
-        Basel as it feels on a hot afternoon: every neighbourhood grows by how much harder it is to
-        walk than a typical metre without trees and fountains, and shrinks where it is easier. The
-        grid is warped along with the city and tinted in the colours of the streets, so big red
-        cells are heat-stressed areas and small teal cells cool ones.
-      </p>
-      <p className="small subtle">
-        The effect is exaggerated to make it visible (area grows with the heat cost to the power
-        of {layout.exaggeration}), so compare areas with each other, not with distances.
-      </p>
-      <dl className="mini-stats">
-        <div>
-          <dt>250 m blocks</dt>
-          <dd>
-            {times(layout.area_ratio_p01)} – {times(layout.area_ratio_p99)}
-          </dd>
-        </div>
-        <div>
-          <dt>Largest shift</dt>
-          <dd>{formatLength(layout.displacement_max_m)}</dd>
-        </div>
-      </dl>
-      <p className="footnote">Only the connected main network is shown.</p>
+      <ul className="info-list small">
+        <li>
+          A tile <strong>grows</strong> where walking is harder than typical and turns red.
+        </li>
+        <li>
+          It <strong>shrinks</strong> where walking is easier and turns teal.
+        </li>
+        <li>
+          Exaggerated to be visible (area ∝ cost<sup>{layout.exaggeration}</sup>): compare tiles with
+          each other, not distances.
+        </li>
+      </ul>
     </>
   );
 }

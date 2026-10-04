@@ -2,10 +2,10 @@
 
 Both routes run on the main component of the graph (api/graph.py). The
 shortest one minimises length, the coolest one the walking cost of the chosen
-heat profile and relief, with the same formula as the frontend (costModel.ts,
+heat profile and factors, with the same formula as the frontend (costModel.ts,
 scripts/cost_model.py):
 
-    cost = length_m * (1 + heat_excess_sq_mean * relief / scale_c^2)
+    cost = length_m * slope * (1 + heat_excess_sq_mean * relief / scale_c^2)
 
 Start and end are snapped to the nearest node, at most SNAP_MAX_M away.
 Plain Dijkstra on ~14k nodes: a comparison takes ~50-100 ms, no graph library needed.
@@ -35,7 +35,7 @@ class Route(BaseModel):
     edges: list[int]
     coordinates: list[list[float]]  # [lon, lat] from start to end
     length_m: float
-    cost_m: float  # walking cost with heat, for the profile and relief asked for
+    cost_m: float  # walking cost, for the profile and factors asked for
     minutes: float  # walking time at WALK_SPEED_M_S
     shade_share: float  # length-weighted share in tree shade
 
@@ -76,12 +76,13 @@ class _Network:
 network = _Network()
 
 
-def _factor(edge, model, profile, trees, fountains):
-    """Heat factor of an edge: cost per metre, see the module docstring."""
+def _factor(edge, model, profile, trees, fountains, slope):
+    """Cost per metre of an edge, see the module docstring."""
     relief = (1 - model.shade_effect * (edge["shade_share"] or 0) if trees else 1) * (
         1 - model.fountain_effect * (edge["fountain_share"] or 0) if fountains else 1
     )
-    return 1 + edge["heat_excess_sq_mean"] * relief / model.scale_c[profile] ** 2
+    slope_factor = 1 + model.slope_weight[profile] * (edge["slope_excess"] or 0) if slope else 1
+    return slope_factor * (1 + edge["heat_excess_sq_mean"] * relief / model.scale_c[profile] ** 2)
 
 
 def _dijkstra(start, end, weight):
@@ -149,6 +150,7 @@ def compare_routes(
     profile: str = DEFAULT_PROFILE,
     trees: bool = True,
     fountains: bool = True,
+    slope: bool = True,
 ):
     """Shortest and coolest route between two points given as 'lon,lat'."""
     model = store.meta.cost_model
@@ -162,7 +164,7 @@ def compare_routes(
         raise HTTPException(422, "start and end snap to the same point")
     length = {e: store.edges[e]["length_m"] for e in network.routable}
     cost = {
-        e: length[e] * _factor(store.edges[e], model, profile, trees, fountains)
+        e: length[e] * _factor(store.edges[e], model, profile, trees, fountains, slope)
         for e in network.routable
     }
     shortest, coolest = _dijkstra(a[0], b[0], length), _dijkstra(a[0], b[0], cost)
