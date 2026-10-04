@@ -403,6 +403,7 @@ export default function App() {
         <Inspector
           selection={selection}
           meta={meta}
+          scheme={scheme}
           profile={profile}
           factors={factors}
           onSelect={select}

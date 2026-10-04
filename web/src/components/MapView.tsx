@@ -11,7 +11,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ROUTE_POINTS_SOURCE, ROUTE_SOURCE, buildStyle, categoryOf } from "../map/style";
+import { FACTOR_LAYERS, ROUTE_POINTS_SOURCE, ROUTE_SOURCE, buildStyle, categoryOf } from "../map/style";
+import { factorIcon } from "../map/icons";
 import { formatHeatRatio, formatLength } from "../format";
 import type { HeatProfile } from "../profiles";
 import { costFactor, referenceMedian, factorsKey, type Factors } from "../costModel";
@@ -71,8 +72,15 @@ function edgeDetail(p: Record<string, any>, profile: HeatProfile, factors: Facto
   return [
     `${formatLength(p.length_m * factor)} cost`,
     formatHeatRatio(factor, referenceMedian(model, profile)),
+    ...(factors.slope && p.grade_mean >= 0.02 ? [`${Math.round(p.grade_mean * 100)} % gradient`] : []),
     p.highway.replace("_", " "),
   ].join(" · ");
+}
+
+// Tooltip of a tree or fountain on the map
+function factorTooltip(p: Record<string, any>): { title: string; detail: string } {
+  if (p.kind === "fountain") return { title: p.name ?? "Fountain", detail: "Fountain" };
+  return { title: p.species ?? "Tree", detail: p.age ? `Public tree, ${p.age} years old` : "Public tree" };
 }
 
 export function MapView({
@@ -147,6 +155,25 @@ export function MapView({
       return map.queryRenderedFeatures(box(5), { layers: ["edges"] })[0] ?? null;
     };
 
+    // trees and fountains (the visible ones), for their tooltip
+    const factorAt = (point: { x: number; y: number }) => {
+      const layers = FACTOR_LAYERS.filter(
+        (l) => map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none",
+      );
+      if (!layers.length) return null;
+      const box: [PointLike, PointLike] = [
+        [point.x - 8, point.y - 8],
+        [point.x + 8, point.y + 8],
+      ];
+      return map.queryRenderedFeatures(box, { layers })[0] ?? null;
+    };
+
+    // factor icons are drawn on demand, also after a restyle
+    map.on("styleimagemissing", (e) => {
+      const icon = factorIcon(e.id);
+      if (icon && !map.hasImage(e.id)) map.addImage(e.id, icon.image, { pixelRatio: icon.pixelRatio });
+    });
+
     map.on("mousemove", (e) => {
       if (handlers.current.picking) {
         // picking route points: no hover or tooltip, just a crosshair
@@ -154,6 +181,12 @@ export function MapView({
         setTooltip(null);
         map.getCanvas().style.cursor = "crosshair";
         return;
+      }
+      const point = factorAt(e.point);
+      if (point) {
+        setHover(null);
+        map.getCanvas().style.cursor = "";
+        return setTooltip({ x: e.point.x, y: e.point.y, ...factorTooltip(point.properties) });
       }
       const f = featureAt(e.point);
       setHover(f);

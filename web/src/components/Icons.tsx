@@ -87,24 +87,27 @@ export const CaneIcon = () => (
   </svg>
 );
 
-// Factor toggles: tree shade, fountains, slope
+// Factor toggles: tree shade, fountains, slope. The paths are shared with the
+// map icons (map/icons.ts), so toggle and map show the same symbol.
 
-export const TreeIcon = () => (
+export const TREE_PATHS = [
+  "M12 21v-6M12 15l-3-2.5M12 16.5l3-2.5",
+  "M12 3a5 5 0 0 1 4.8 3.6A4 4 0 0 1 16 14.5H8a4 4 0 0 1-.8-7.9A5 5 0 0 1 12 3z",
+];
+export const DROP_PATHS = [
+  "M12 3.5c3 3.6 6 6.9 6 10.5a6 6 0 0 1-12 0c0-3.6 3-6.9 6-10.5z",
+  "M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5",
+];
+export const SLOPE_PATHS = ["M3 19L10 9l4 5 2.5-3L21 19z"];
+
+const factorIcon = (paths: string[]) => () => (
   <svg {...base} width={20} height={20} strokeWidth={2.2}>
-    <path d="M12 21v-6M12 15l-3-2.5M12 16.5l3-2.5" />
-    <path d="M12 3a5 5 0 0 1 4.8 3.6A4 4 0 0 1 16 14.5H8a4 4 0 0 1-.8-7.9A5 5 0 0 1 12 3z" />
+    {paths.map((d) => (
+      <path key={d} d={d} />
+    ))}
   </svg>
 );
 
-export const DropIcon = () => (
-  <svg {...base} width={20} height={20} strokeWidth={2.2}>
-    <path d="M12 3.5c3 3.6 6 6.9 6 10.5a6 6 0 0 1-12 0c0-3.6 3-6.9 6-10.5z" />
-    <path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5" />
-  </svg>
-);
-
-export const SlopeIcon = () => (
-  <svg {...base} width={20} height={20} strokeWidth={2.2}>
-    <path d="M3 19L10 9l4 5 2.5-3L21 19z" />
-  </svg>
-);
+export const TreeIcon = factorIcon(TREE_PATHS);
+export const DropIcon = factorIcon(DROP_PATHS);
+export const SlopeIcon = factorIcon(SLOPE_PATHS);

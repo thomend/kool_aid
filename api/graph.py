@@ -124,6 +124,7 @@ class _Store:
                 LEFT JOIN fountains f ON f.fountain_id = ef.nearest_fountain_id
             """)  # run scripts/join_fountains_edges.py
             cost_model = _load_cost_model(con)
+            factor_points = _factor_points(con)
         finally:
             con.close()
 
@@ -190,6 +191,7 @@ class _Store:
 
         self.edges_geojson = _dump({"type": "FeatureCollection", "features": edge_features})
         self.nodes_geojson = _dump({"type": "FeatureCollection", "features": node_features})
+        self.factors_geojson = _dump({"type": "FeatureCollection", "features": factor_points})
 
         lons = [n["lon"] for n in self.nodes.values()]
         lats = [n["lat"] for n in self.nodes.values()]
@@ -209,6 +211,35 @@ def _optional(con, sql):
         return {row[0]: row[1:] for row in con.sql(sql).fetchall()}
     except (duckdb.CatalogException, duckdb.BinderException):
         return {}
+
+
+def _factor_points(con):
+    """Trees and fountains as GeoJSON point features, for the map (empty without their tables)."""
+    points = [
+        ("tree", lon, lat, {"species": species, "age": age})
+        for lon, lat, species, age in _rows(con, "SELECT lon, lat, species_german, age_years FROM trees")
+    ] + [
+        ("fountain", lon, lat, {"name": name})
+        for lon, lat, name in _rows(con, "SELECT lon, lat, name FROM fountains")
+    ]
+    return [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [round(lon, COORD_DECIMALS), round(lat, COORD_DECIMALS)],
+            },
+            "properties": {"kind": kind, **{k: v for k, v in props.items() if v is not None}},
+        }
+        for kind, lon, lat, props in points
+    ]
+
+
+def _rows(con, sql):
+    try:
+        return con.sql(sql).fetchall()
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return []
 
 
 def _load_cost_model(con):
@@ -260,6 +291,12 @@ def get_edges():
 def get_nodes():
     """All nodes as GeoJSON with id, degree, node_type and component."""
     return Response(store.nodes_geojson, media_type="application/geo+json")
+
+
+@router.get("/factors", response_description="GeoJSON FeatureCollection of Points")
+def get_factors():
+    """Public trees (species, age) and fountains (name) as GeoJSON, kind = tree | fountain."""
+    return Response(store.factors_geojson, media_type="application/geo+json")
 
 
 @router.get("/nodes/{node_id}", response_model=NodeDetail)

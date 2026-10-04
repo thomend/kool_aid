@@ -20,13 +20,13 @@ Show where walking in Basel is hard in the heat, how much harder, and what trees
 
 The walkable network (paths, sidewalks, streets) is a graph: intersections are nodes, the sections between them edges. Every edge gets a **walking cost**: its length, stretched by heat stress and slope, and softened by tree shade and nearby fountains. The web app shows it in two views:
 
-- **Geographic**: the network on a map, each street coloured by cost per metre (teal = easier, red = harder than a typical metre). Click a street for details: cost, PET, tree shade, nearest fountain, gradient.
+- **Geographic**: the network on a map, each street coloured by cost per metre (teal = easier, red = harder than a typical metre). Click a street to see why it costs what it does: what heat, tree shade, a nearby fountain and slope each add or take off. Click an intersection to compare the streets that meet there.
 - **Cost space**: Basel as it feels on a hot afternoon. A cartogram grows every neighbourhood by how much harder it is to walk there and shrinks it where it is easier; streets, rivers, labels and a tinted grid warp with it. A slider morphs between map and cost space.
 
 In the panel:
 
 - **Heat sensitivity** (low, medium, high) sets how strongly heat counts.
-- **Count in** switches tree shade, fountains and slope on or off, to see what they change.
+- **Count in** switches tree shade, fountains and slope on or off, to see what they change. Switched-on factors also appear on the map with the same icons when zoomed in: fountains, trees and steep streets (≥ 6 %), with tooltips for tree species and fountain names.
 - **Compare routes**: pick two points to see the shortest route next to the coolest one, how much longer the cool one is and how much of the extra strain from heat and slope it avoids.
 
 ## How costs are calculated
@@ -102,6 +102,7 @@ The `fetch_` scripts and the first run of the tree, fountain and slope scripts n
 |---|---|
 | `GET /api/graph/meta` | Counts, bounds, cost-model constants |
 | `GET /api/graph/edges` · `/nodes` | The whole graph as GeoJSON |
+| `GET /api/graph/factors` | Trees (species, age) and fountains (name) as GeoJSON points |
 | `GET /api/graph/edges/{id}` · `/nodes/{id}` | One edge or node |
 | `GET /api/layout/cost-space?profile=medium&trees=true&fountains=true&slope=true` | Map and cost-space positions for a profile and factor variant |
 | `GET /api/route?start=lon,lat&end=lon,lat&profile=medium&trees=true&fountains=true&slope=true` | Shortest and coolest walking route between two points |

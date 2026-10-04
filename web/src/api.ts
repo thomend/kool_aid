@@ -76,6 +76,7 @@ export interface NodeDetail {
 
 export const EDGES_URL = "/api/graph/edges";
 export const NODES_URL = "/api/graph/nodes";
+export const FACTORS_URL = "/api/graph/factors";
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });

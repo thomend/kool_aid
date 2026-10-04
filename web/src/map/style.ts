@@ -7,7 +7,8 @@ import type {
   LayerSpecification,
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
-import { EDGES_URL, NODES_URL, type CostModel } from "../api";
+import { EDGES_URL, FACTORS_URL, NODES_URL, type CostModel } from "../api";
+import { FACTOR_COLOR, factorIconId } from "./icons";
 import { referenceMedian, type Factors } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
@@ -175,6 +176,74 @@ function graphLayers(
   ];
 }
 
+// Cost factors on the map, each shown while its toggle is on: trees, fountains
+// and steep streets as icons from ICON_MIN_ZOOM (trees as dots before)
+export const FACTOR_LAYERS = ["factor-trees", "factor-fountains"];
+const STEEP_GRADE = 0.06;
+const ICON_MIN_ZOOM = 16.5;
+
+function factorLayers(scheme: Scheme, factors: Factors): LayerSpecification[] {
+  const visible = (on: boolean) => (on ? "visible" : "none") as "visible" | "none";
+  const isKind = (kind: string): ExpressionSpecification => ["==", ["get", "kind"], kind];
+  const iconSize: ExpressionSpecification = ["interpolate", ["linear"], ["zoom"], ICON_MIN_ZOOM, 0.6, 19, 1];
+  return [
+    {
+      id: "factor-tree-dots",
+      type: "circle",
+      source: "factors",
+      filter: isKind("tree"),
+      minzoom: 14,
+      maxzoom: ICON_MIN_ZOOM,
+      layout: { visibility: visible(factors.trees) },
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 1.2, ICON_MIN_ZOOM, 2.5],
+        "circle-color": FACTOR_COLOR.tree[scheme],
+        "circle-opacity": 0.75,
+      },
+    },
+    {
+      id: "factor-trees",
+      type: "symbol",
+      source: "factors",
+      filter: isKind("tree"),
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.trees),
+        "icon-image": factorIconId("tree", scheme),
+        "icon-size": iconSize,
+        "icon-padding": 0,
+      },
+    },
+    {
+      id: "factor-slope",
+      type: "symbol",
+      source: "graph-edges",
+      filter: ["all", isMainComponent, [">=", ["coalesce", ["get", "grade_mean"], 0], STEEP_GRADE]],
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.slope),
+        "symbol-placement": "line-center",
+        "icon-image": factorIconId("slope", scheme),
+        "icon-size": iconSize,
+        "icon-rotation-alignment": "viewport",
+      },
+    },
+    {
+      id: "factor-fountains",
+      type: "symbol",
+      source: "factors",
+      filter: isKind("fountain"),
+      minzoom: ICON_MIN_ZOOM,
+      layout: {
+        visibility: visible(factors.fountains),
+        "icon-image": factorIconId("fountain", scheme),
+        "icon-size": iconSize,
+        "icon-allow-overlap": true,
+      },
+    },
+  ];
+}
+
 // Route comparison: the coolest route in blue, the shortest one dashed
 export const ROUTE_SOURCE = "routes";
 export const ROUTE_POINTS_SOURCE = "route-points";
@@ -245,10 +314,11 @@ export function buildStyle(
       ...BASEMAP_SOURCE,
       "graph-edges": { type: "geojson", data: EDGES_URL, promoteId: "id" },
       "graph-nodes": { type: "geojson", data: NODES_URL, promoteId: "id" },
+      factors: { type: "geojson", data: FACTORS_URL },
       // filled by MapView with the route comparison
       [ROUTE_SOURCE]: { type: "geojson", data: emptyCollection() },
       [ROUTE_POINTS_SOURCE]: { type: "geojson", data: emptyCollection() },
     },
-    layers: [...below, glow, edges, ...above, nodes, ...routeLayers(scheme)],
+    layers: [...below, glow, edges, ...above, nodes, ...factorLayers(scheme, factors), ...routeLayers(scheme)],
   };
 }

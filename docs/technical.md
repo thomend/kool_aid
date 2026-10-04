@@ -101,7 +101,11 @@ relief = (1 − 0.5 × shade_share) × (1 − 0.2 × fountain_share)
 
 Each street is coloured by its cost per metre divided by the **reference**: the length-weighted median cost per metre of the whole network without trees, fountains and slope, per profile (1.41 / 1.73 / 2.65). The scale runs from 0.6× (teal) through 1× (grey) to 1.6× (red). Because the reference stays fixed, switching trees on visibly cools streets down instead of the scale moving along. The map evaluates the formula as a MapLibre expression on the GeoJSON properties; deck.gl uses the same stops in `colors.ts`.
 
-### 4.5 Cost space: diffusion cartogram (`build_layout.py`, `cartogram.py`)
+### 4.5 Factors on the map
+
+Switched-on factors are drawn in the geographic view with the toggle buttons' own symbols: the SVG paths are shared (`components/Icons.tsx`), drawn onto a coloured badge with Canvas `Path2D` and handed to MapLibre whenever a style asks for them (`styleimagemissing`), so they survive theme changes. Trees and fountains come from `/api/graph/factors`. All factor icons appear from zoom 16.5 (`ICON_MIN_ZOOM` in `map/style.ts`), trees as dots from zoom 14 before that; MapLibre hides overlapping icons. Steep streets (mean gradient ≥ 6 %) get an icon at their middle (`symbol-placement: line-center`) on the edge layer itself, so no extra data is needed.
+
+### 4.6 Cost space: diffusion cartogram (`build_layout.py`, `cartogram.py`)
 
 The cost space is a **density-equalising cartogram** (Gastner & Newman 2004):
 
@@ -113,7 +117,7 @@ The cost space is a **density-equalising cartogram** (Gastner & Newman 2004):
 
 In the browser, the slider interpolates every vertex linearly between map position (0) and warped position (1). When the profile or a factor changes, the new warp is blended in from the old one over 0.9 s. The 250 m cells are coloured with the street colour of the cost ratio their area stands for (area^(1/exaggeration)), so size and colour always agree.
 
-### 4.6 Shortest and coolest route (`api/routing.py`)
+### 4.7 Shortest and coolest route (`api/routing.py`)
 
 - Start and destination clicks are **snapped** to the nearest node of the main network (equirectangular distance, at most 300 m away).
 - **Dijkstra** with a binary heap (`heapq`) on the undirected adjacency list, run twice: weight = length for the shortest route, weight = walking cost (formula above, with the chosen profile and factors) for the coolest. ~14k nodes, 50–100 ms per comparison.
@@ -121,11 +125,11 @@ In the browser, the slider interpolates every vertex linearly between map positi
 - Reported per route: length, walking time at 1.3 m/s, walking cost and shade share. The panel compares the extra strain (cost − length) of both routes.
 - Uphill and downhill cost the same by design, so routes are symmetric.
 
-### 4.7 Backend caching
+### 4.8 Backend caching
 
 The API keeps the graph and pre-serialised GeoJSON in memory. Cost-space payloads (~4 MB each) are built from the stored warp on first request (~1 s) and cached; after startup, a background thread builds all 24 so switching is instant. `POST /api/graph/reload` re-reads the database after a pipeline run.
 
-### 4.8 How correctness was checked
+### 4.9 How correctness was checked
 
 - Browser formula vs pipeline formula: identical over hundreds of random cases.
 - Map colours (MapLibre expression) vs cost-space colours: identical to within half a colour step, all 48 styles validated with MapLibre's style spec.
