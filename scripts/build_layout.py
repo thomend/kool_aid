@@ -13,19 +13,19 @@ visible: as walked, areas would change by at most ~1.5x. The warp is smooth and
 never folds; streets, rivers, labels and the background grid all move with it.
 
 One cartogram is computed per heat-sensitivity profile (cost_model.PROFILES)
-and relief variant (tree shade and fountains each on or off).
+and factor variant (tree shade, fountains and slope each on or off).
 
 Writes:
-  edge_heat     edge_id, pet_mean_c, heat_excess_sq_mean, shade_share, fountain_share
-                for every main-component edge: the ingredients of the cost, from
+  edge_heat     edge_id, pet_mean_c, heat_excess_sq_mean, shade_share, fountain_share,
+                slope_excess for every main-component edge: the ingredients of the cost, from
                 which the frontend computes it for any profile and variant
   cost_model    one row: the constants of the formula (cost_model.py)
-  layout_warp   profile, trees, fountains and the warped lattice (WARP_STEP_M), from
+  layout_warp   profile, trees, fountains, slope and the warped lattice (WARP_STEP_M), from
                 which the API moves any point into cost space
   layout_meta   one row of parameters and quality measures per profile and variant
 
 Usage:
-    python scripts/build_layout.py [--db data/basel.duckdb] [--exaggeration 6]
+    python scripts/build_layout.py [--db data/basel.duckdb] [--exaggeration 5]
 """
 
 import argparse
@@ -41,15 +41,17 @@ from cost_model import (
     PET_THRESHOLD_C,
     PROFILES,
     SHADE_EFFECT,
+    SLOPE_WEIGHT,
     heat_factor,
     median_heat_factor,
     relieved_heat_excess_sq,
+    slope_factor,
 )
 
-# Relief variants: (tree shade counted, fountains counted)
-VARIANTS = [(False, False), (True, False), (False, True), (True, True)]
+# Factor variants: (tree shade, fountains, slope) each counted or not
+VARIANTS = [(t, f, s) for t in (False, True) for f in (False, True) for s in (False, True)]
 
-EXAGGERATION = 6.0  # target area = ratio ** this; at 6, the hottest blocks grow ~5x
+EXAGGERATION = 5.0  # target area = ratio ** this; at 5, the hottest blocks grow ~3-4x
 CELL_M = 50.0  # cartogram grid
 GRID_SIZE = 512  # cells per side (25.6 km), a wide neutral margin around Basel
 SMOOTHING_M = 125.0  # neighbourhood scale of the heat field
@@ -58,23 +60,23 @@ WARP_STEP_M = 100.0  # spacing of the stored warp lattice
 BLOCK_M = 250.0  # block size for the area statistics
 
 
-def edge_factor(heat, scale_c, trees, fountains):
-    """Heat factor per edge for a profile scale and relief variant.
+def edge_factor(heat, profile, trees, fountains, slope):
+    """Cost per metre of each edge for a profile and factor variant.
 
-    heat is (heat_excess_sq_mean, shade_share, fountain_share) per edge.
+    heat is (heat_excess_sq_mean, shade_share, fountain_share, slope_excess) per edge.
     """
-    excess, shade, fountain = heat
-    return heat_factor(
-        relieved_heat_excess_sq(excess, shade * trees, fountain * fountains), scale_c
+    excess, shade, fountain, slope_excess = heat
+    return slope_factor(slope_excess * slope, SLOPE_WEIGHT[profile]) * heat_factor(
+        relieved_heat_excess_sq(excess, shade * trees, fountain * fountains), PROFILES[profile]
     )
 
 
 def load_edge_heat(con, edge_ids):
-    """PET and (heat excess, shade share, fountain share) per edge id, see cost_model.py.
+    """PET and (heat excess, shade share, fountain share, slope excess) per edge id.
 
     PET is NaN where edge_stadtklima has no sample (no raster coverage). Those
     edges take the heat excess of their neighbours, spreading inward over a
-    few rounds; any left take the median. Shade and fountain shares are 0
+    few rounds; any left take the median. Shade, fountains and slope are 0
     where their tables have no row.
     """
     n = len(edge_ids)
@@ -83,7 +85,7 @@ def load_edge_heat(con, edge_ids):
             "SELECT edge_id, pet_mean_c, heat_excess_sq_mean FROM edge_stadtklima"
         ).fetchnumpy()
     except duckdb.CatalogException:
-        return np.full(n, np.nan), (np.zeros(n), np.zeros(n), np.zeros(n))
+        return np.full(n, np.nan), tuple(np.zeros(n) for _ in range(4))
     except duckdb.BinderException:
         raise SystemExit(
             "edge_stadtklima has no heat_excess_sq_mean; rerun "
@@ -99,15 +101,16 @@ def load_edge_heat(con, edge_ids):
         return values
 
     excess = fill_from_neighbours(con, edge_ids, column("heat_excess_sq_mean"))
-    shade = load_edge_share(con, edge_ids, "edge_trees", "shade_share", "join_trees_edges.py")
-    fountain = load_edge_share(
+    shade = load_edge_value(con, edge_ids, "edge_trees", "shade_share", "join_trees_edges.py")
+    fountain = load_edge_value(
         con, edge_ids, "edge_fountains", "fountain_share", "join_fountains_edges.py"
     )
-    return column("pet_mean_c"), (excess, shade, fountain)
+    slope = load_edge_value(con, edge_ids, "edge_slope", "slope_excess", "join_slope_edges.py")
+    return column("pet_mean_c"), (excess, shade, fountain, slope)
 
 
-def load_edge_share(con, edge_ids, table, column, script):
-    """A 0..1 share per edge id from `table`; 0 where it has no row or doesn't exist."""
+def load_edge_value(con, edge_ids, table, column, script):
+    """A value per edge id from `table`; 0 where it has no row or doesn't exist."""
     try:
         rows = con.sql(f"SELECT edge_id, {column} FROM {table}").fetchnumpy()
     except (duckdb.CatalogException, duckdb.BinderException):
@@ -222,12 +225,13 @@ def main():
             pet_mean_c DOUBLE,           -- NULL where edge_stadtklima has no sample
             heat_excess_sq_mean DOUBLE,  -- from neighbours where PET is missing
             shade_share DOUBLE,          -- 0 without edge_trees
-            fountain_share DOUBLE        -- 0 without edge_fountains
+            fountain_share DOUBLE,       -- 0 without edge_fountains
+            slope_excess DOUBLE          -- 0 without edge_slope
         )
     """)
     con.execute(
         """INSERT INTO edge_heat
-           SELECT unnest($1), unnest($2), unnest($3), unnest($4), unnest($5)""",
+           SELECT unnest($1), unnest($2), unnest($3), unnest($4), unnest($5), unnest($6)""",
         [
             all_edges["id"].tolist(),
             [None if np.isnan(v) else v for v in all_pet.tolist()],
@@ -247,12 +251,12 @@ def main():
     )
     con.execute("""
         CREATE OR REPLACE TABLE layout_warp (
-            profile VARCHAR, trees BOOLEAN, fountains BOOLEAN,
+            profile VARCHAR, trees BOOLEAN, fountains BOOLEAN, slope BOOLEAN,
             x0 DOUBLE, y0 DOUBLE,  -- LV95 metres of lattice node (0, 0)
             step_m DOUBLE,
             nx INTEGER, ny INTEGER,
             moved DOUBLE[],        -- warped (x, y) of every lattice node, x-major
-            PRIMARY KEY (profile, trees, fountains)
+            PRIMARY KEY (profile, trees, fountains, slope)
         )
     """)
     con.execute("""
@@ -260,11 +264,13 @@ def main():
             profile VARCHAR,              -- heat-sensitivity profile, see cost_model.py
             trees BOOLEAN,                -- tree shade counted
             fountains BOOLEAN,            -- fountains counted
+            slope BOOLEAN,                -- slope counted
             built_at TIMESTAMP,
             cost VARCHAR,                 -- the cost formula
             scale_c DOUBLE,               -- the profile's PET scale
-            reference_median DOUBLE,      -- heat factor 1 in the layout (median without relief)
-            heat_factor_median DOUBLE,    -- this variant's own median, for comparison
+            slope_weight DOUBLE,          -- the profile's slope weight
+            reference_median DOUBLE,      -- cost per metre 1 in the layout (median without factors)
+            heat_factor_median DOUBLE,    -- this variant's own median cost per metre
             exaggeration DOUBLE,          -- target area = ratio ^ this
             area_ratio_p01 DOUBLE,        -- area change of 250 m blocks with network
             area_ratio_p50 DOUBLE,
@@ -273,7 +279,7 @@ def main():
             displacement_median_m DOUBLE, -- how far nodes moved from geography
             displacement_p95_m DOUBLE,
             displacement_max_m DOUBLE,
-            PRIMARY KEY (profile, trees, fountains)
+            PRIMARY KEY (profile, trees, fountains, slope)
         )
     """)
 
@@ -283,16 +289,16 @@ def main():
     mid_cell = np.floor(((geo[src] + geo[dst]) / 2 - origin) / CELL_M).astype(int)
 
     for profile, scale in PROFILES.items():
-        # Fixed reference: what a typical metre costs without trees and fountains
+        # Fixed reference: what a typical metre costs without trees, fountains and slope
         reference = median_heat_factor(
-            edge_factor(all_heat, scale, False, False), all_edges["length_m"]
+            edge_factor(all_heat, profile, False, False, False), all_edges["length_m"]
         )
-        for trees, fountains in VARIANTS:
+        for trees, fountains, slope in VARIANTS:
             started = time.time()
             median = median_heat_factor(
-                edge_factor(all_heat, scale, trees, fountains), all_edges["length_m"]
+                edge_factor(all_heat, profile, trees, fountains, slope), all_edges["length_m"]
             )
-            ratio = edge_factor(heat, scale, trees, fountains) / reference
+            ratio = edge_factor(heat, profile, trees, fountains, slope) / reference
             density = heat_density(origin, mid_cell, length, ratio, args.exaggeration)
             warp = stored_warp(origin, diffuse(density), bounds)
             areas = block_area_ratios(warp, geo)
@@ -309,21 +315,26 @@ def main():
 
             nx, ny = warp.moved.shape[:2]
             con.execute(
-                "INSERT INTO layout_warp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [profile, trees, fountains, warp.x0, warp.y0, warp.step_m, nx, ny,
+                "INSERT INTO layout_warp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [profile, trees, fountains, slope, warp.x0, warp.y0, warp.step_m, nx, ny,
                  warp.moved.ravel().round(2).tolist()],
             )
             relief = (f" * (1 - {SHADE_EFFECT:g} * shade)" if trees else "") + (
                 f" * (1 - {FOUNTAIN_EFFECT:g} * fountain)" if fountains else ""
             )
+            weight = SLOPE_WEIGHT[profile]
+            slope_term = f" * (1 + {weight:g} * slope_excess)" if slope else ""
             con.execute(
-                "INSERT INTO layout_meta VALUES (?, ?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO layout_meta VALUES (?, ?, ?, ?, now(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     profile,
                     trees,
                     fountains,
-                    f"length_m * (1 + max(PET - {PET_THRESHOLD_C:g} C, 0)^2{relief} / {scale:g} C^2)",
+                    slope,
+                    f"length_m{slope_term} * (1 + max(PET - {PET_THRESHOLD_C:g} C, 0)^2{relief}"
+                    f" / {scale:g} C^2)",
                     scale,
+                    weight,
                     reference,
                     median,
                     args.exaggeration,
@@ -331,7 +342,8 @@ def main():
                 ],
             )
             print(
-                f"[{profile}, trees {'on' if trees else 'off'}, fountains {'on' if fountains else 'off'}] "
+                f"[{profile}, trees {'on' if trees else 'off'}, fountains {'on' if fountains else 'off'}, "
+                f"slope {'on' if slope else 'off'}] "
                 f"{time.time() - started:.0f}s; 250 m blocks x{quality['area_ratio_p01']:.2f} .. "
                 f"x{quality['area_ratio_p99']:.2f} (median x{quality['area_ratio_p50']:.2f}, "
                 f"max x{quality['area_ratio_max']:.2f}); nodes moved median "

@@ -13,11 +13,11 @@ export function formatPet(c: number | null): string | null {
   return c === null ? null : `${Math.round(c)}°C PET`;
 }
 
-/** Heat cost per metre relative to the reference, e.g. "+25 % heat vs. typical". */
+/** Cost per metre relative to the reference, e.g. "+25 % vs. typical". */
 export function formatHeatRatio(factor: number, median: number): string {
   const pct = Math.round((factor / median - 1) * 100);
-  if (Math.abs(pct) < 3) return "typical heat";
-  return `${pct > 0 ? "+" : "−"}${Math.abs(pct)} % heat vs. typical`;
+  if (Math.abs(pct) < 3) return "typical";
+  return `${pct > 0 ? "+" : "−"}${Math.abs(pct)} % vs. typical`;
 }
 
 /** Tree shade of an edge, e.g. "60 % in tree shade · 12 trees nearby". */
@@ -29,4 +29,11 @@ export function formatTrees(count: number, shade: number): string {
 /** Nearest fountain of an edge, e.g. "Fountain 40 m away: Sevogel-Brunnen". */
 export function formatFountain(name: string | null, distanceM: number): string {
   return `Fountain ${formatLength(distanceM)} away${name ? `: ${name}` : ""}`;
+}
+
+/** Gradient of an edge, e.g. "Gradient 6 % (steepest 11 %)". */
+export function formatGrade(mean: number, max: number): string {
+  if (max < 0.02) return "Flat";
+  const pct = (g: number) => `${Math.round(g * 100)} %`;
+  return `Gradient ${pct(mean)}${max >= mean + 0.02 ? ` (steepest ${pct(max)})` : ""}`;
 }

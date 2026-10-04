@@ -8,7 +8,7 @@ import type {
   StyleSpecification,
 } from "@maplibre/maplibre-gl-style-spec";
 import { EDGES_URL, NODES_URL, type CostModel } from "../api";
-import { referenceMedian, type Relief } from "../costModel";
+import { referenceMedian, type Factors } from "../costModel";
 import { BASEMAP_SOURCE, GLYPHS, basemapLayers, type Scheme } from "./basemap";
 import type { HeatProfile } from "../profiles";
 
@@ -23,9 +23,9 @@ const EDGE_CATEGORIES: { label: string; highways: string[] }[] = [
 export const categoryOf = (highway: string) =>
   EDGE_CATEGORIES.find((c) => c.highways.includes(highway)) ?? EDGE_CATEGORIES[EDGE_CATEGORIES.length - 1];
 
-// Diverging heat scale: heat cost per metre relative to a fixed reference, the
-// median without trees and fountains, so switching them on visibly cools streets
-// down. Teal, not blue, so it never reads as the blue selection accent.
+// Diverging scale: cost per metre relative to a fixed reference, the median
+// without trees, fountains and slope, so switching factors on visibly changes
+// the streets. Teal, not blue, so it never reads as the blue selection accent.
 export const HEAT_RATIOS = [0.6, 0.8, 1, 1.25, 1.6];
 const HEAT_RAMP: Record<Scheme, string[]> = {
   light: ["#0b8a92", "#62bcc4", "#c4c4c9", "#f39a5b", "#e0352b"],
@@ -39,11 +39,11 @@ export function heatStops(model: CostModel, scheme: Scheme, profile: HeatProfile
   return HEAT_RATIOS.map((r, i) => [r * reference, HEAT_RAMP[scheme][i]]);
 }
 
-/** costModel.heatFactor as a MapLibre expression over an edge's properties. */
-function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Relief): ExpressionSpecification {
+/** costModel.costFactor as a MapLibre expression over an edge's properties. */
+function costFactorExpression(model: CostModel, profile: HeatProfile, factors: Factors): ExpressionSpecification {
   const relieved = (on: boolean, effect: number, key: string): ExpressionSpecification | number =>
     on ? ["-", 1, ["*", effect, ["coalesce", ["get", key], 0]]] : 1;
-  return [
+  const heat: ExpressionSpecification = [
     "+",
     1,
     [
@@ -51,12 +51,19 @@ function heatFactorExpression(model: CostModel, profile: HeatProfile, relief: Re
       [
         "*",
         ["get", "heat_excess_sq_mean"],
-        relieved(relief.trees, model.shade_effect, "shade_share"),
-        relieved(relief.fountains, model.fountain_effect, "fountain_share"),
+        relieved(factors.trees, model.shade_effect, "shade_share"),
+        relieved(factors.fountains, model.fountain_effect, "fountain_share"),
       ],
       model.scale_c[profile] ** 2,
     ],
   ];
+  if (!factors.slope) return heat;
+  const slope: ExpressionSpecification = [
+    "+",
+    1,
+    ["*", model.slope_weight[profile], ["coalesce", ["get", "slope_excess"], 0]],
+  ];
+  return ["*", slope, heat];
 }
 
 export const ACCENT: Record<Scheme, string> = { light: "#007aff", dark: "#0a84ff" };
@@ -67,7 +74,7 @@ function edgeColor(
   model: CostModel | null,
   scheme: Scheme,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): ExpressionSpecification | string {
   if (!model) return NO_DATA[scheme];
   return [
@@ -76,7 +83,7 @@ function edgeColor(
     [
       "interpolate",
       ["linear"],
-      heatFactorExpression(model, profile, relief),
+      costFactorExpression(model, profile, factors),
       ...heatStops(model, scheme, profile).flat(),
     ],
     NO_DATA[scheme],
@@ -109,7 +116,7 @@ function graphLayers(
   model: CostModel | null,
   scheme: Scheme,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): LayerSpecification[] {
   return [
     {
@@ -130,7 +137,7 @@ function graphLayers(
       source: "graph-edges",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, relief)],
+        "line-color": ["case", selected, ACCENT[scheme], edgeColor(model, scheme, profile, factors)],
         "line-width": edgeWidth(["case", ["any", selected, hovered], 1.6, 1]),
         "line-opacity": ["case", isMainComponent, 0.95, 0.35],
       },
@@ -227,10 +234,10 @@ export function buildStyle(
   scheme: Scheme,
   model: CostModel | null,
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
 ): StyleSpecification {
   const { below, above } = basemapLayers(scheme);
-  const [glow, edges, nodes] = graphLayers(model, scheme, profile, relief);
+  const [glow, edges, nodes] = graphLayers(model, scheme, profile, factors);
   return {
     version: 8,
     glyphs: GLYPHS,

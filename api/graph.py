@@ -35,7 +35,8 @@ class Bounds(BaseModel):
 class CostModel(BaseModel):
     """Constants of the walking-cost formula, see scripts/cost_model.py.
 
-    cost = length_m * (1 + heat_excess_sq_mean * relief / scale_c^2), with
+    cost = length_m * slope * (1 + heat_excess_sq_mean * relief / scale_c^2), with
+    slope  = 1 + slope_weight * slope_excess [slope on]
     relief = (1 - shade_effect * shade_share) [trees on]
            * (1 - fountain_effect * fountain_share) [fountains on]
     """
@@ -43,8 +44,9 @@ class CostModel(BaseModel):
     shade_effect: float
     fountain_effect: float
     scale_c: dict[str, float]  # per profile
-    # per profile: median heat factor without trees and fountains, the fixed
-    # reference of the colours and the cost-space layouts
+    slope_weight: dict[str, float]  # per profile
+    # per profile: median cost per metre without trees, fountains and slope,
+    # the fixed reference of the colours and the cost-space layouts
     reference_median: dict[str, float]
 
 
@@ -77,6 +79,9 @@ class EdgeSummary(BaseModel):
     nearest_fountain: str | None
     nearest_fountain_m: float | None
     fountain_share: float | None
+    slope_excess: float | None  # extra walking time for the slope (scripts/join_slope_edges.py)
+    grade_mean: float | None  # mean |gradient|, 0.05 = 5 %
+    grade_max: float | None  # steepest 5 m
 
 
 class NodeDetail(BaseModel):
@@ -105,8 +110,11 @@ class _Store:
                 FROM edges
             """).fetchall()
             heat = _optional(con, """
-                SELECT edge_id, pet_mean_c, heat_excess_sq_mean FROM edge_heat
+                SELECT edge_id, pet_mean_c, heat_excess_sq_mean, slope_excess FROM edge_heat
             """)  # run scripts/build_layout.py
+            slope = _optional(con, """
+                SELECT edge_id, grade_mean, grade_max FROM edge_slope
+            """)  # run scripts/join_slope_edges.py
             trees = _optional(con, """
                 SELECT edge_id, tree_count, shade_share FROM edge_trees
             """)  # run scripts/join_trees_edges.py
@@ -135,9 +143,13 @@ class _Store:
                 fields,
                 strict=True,
             ))
-            pet, excess = heat.get(edge["id"], (None, None))
+            pet, excess, slope_excess = heat.get(edge["id"], (None, None, None))
             edge["pet_mean_c"] = _round(pet, 1)
             edge["heat_excess_sq_mean"] = _round(excess, 2)
+            edge["slope_excess"] = _round(slope_excess, 4)
+            grade_mean, grade_max = slope.get(edge["id"], (None, None))
+            edge["grade_mean"] = _round(grade_mean, 3)
+            edge["grade_max"] = _round(grade_max, 3)
             tree_count, shade = trees.get(edge["id"], (None, None))
             edge["tree_count"] = tree_count
             edge["shade_share"] = _round(shade, 3)
@@ -205,8 +217,8 @@ def _load_cost_model(con):
             "SELECT pet_threshold_c, shade_effect, fountain_effect FROM cost_model"
         ).fetchone()
         rows = con.sql("""
-            SELECT profile, scale_c, reference_median FROM layout_meta
-            WHERE NOT trees AND NOT fountains
+            SELECT profile, scale_c, slope_weight, reference_median FROM layout_meta
+            WHERE NOT trees AND NOT fountains AND NOT slope
         """).fetchall()
     except (duckdb.CatalogException, duckdb.BinderException):
         return None
@@ -214,8 +226,9 @@ def _load_cost_model(con):
         pet_threshold_c=threshold,
         shade_effect=shade,
         fountain_effect=fountain,
-        scale_c={p: scale for p, scale, _ in rows},
-        reference_median={p: round(ref, 4) for p, _, ref in rows},
+        scale_c={p: scale for p, scale, _, _ in rows},
+        slope_weight={p: weight for p, _, weight, _ in rows},
+        reference_median={p: round(ref, 4) for p, _, _, ref in rows},
     )
 
 

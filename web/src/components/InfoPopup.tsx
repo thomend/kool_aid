@@ -17,10 +17,10 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
       </button>
       <h3>About this map</h3>
       <p className="small">
-        Walking cost is length stretched by heat stress (PET), so hot, shadeless streets cost
-        more to walk than cool, comfortable ones. Edges are coloured by heat cost per metre
-        compared with a typical metre of Basel without trees and fountains: red streets are
-        hotter than that, teal ones cooler.
+        Walking cost is length stretched by heat stress (PET) and slope, so hot, shadeless or
+        steep streets cost more to walk than cool, flat ones. Edges are coloured by cost per
+        metre compared with a typical metre of Basel without trees, fountains and slope: red
+        streets are harder to walk than that, teal ones easier.
       </p>
       <p className="small">
         Heat only counts above 29 °C PET, where moderate heat stress begins, and then grows
@@ -32,9 +32,11 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
         <strong>Tree shade</strong> softens the heat: the part of a street under a public tree's
         crown counts only half of its extra heat cost. <strong>Fountains</strong> offer a drink
         and a cool-down: within 100 m of one, a street loses a fifth of its extra heat cost.
-        Switch either off under <em>Count in</em> to see what they change: colours and the cost
-        space are always measured against Basel without trees and fountains, so streets they
-        help turn cooler and the city draws together.
+        <strong>Slope</strong> makes you slower (uphill and downhill alike: +19 % at 5 %, +42 % at
+        10 %), and so longer in the heat; it counts double for <em>high</em> and half for{" "}
+        <em>low</em> sensitivity. Switch any factor off under <em>Count in</em> to see what it
+        changes: colours and the cost space are always measured against Basel without trees,
+        fountains and slope.
       </p>
       {layout ? (
         <CostSpaceNote layout={layout} />
@@ -55,13 +57,13 @@ function CostSpaceNote({ layout }: { layout: LayoutMeta }) {
       <p className="section-label">Cost space</p>
       <p className="small">
         Basel as it feels on a hot afternoon: every neighbourhood grows by how much harder it is to
-        walk than a typical metre without trees and fountains, and shrinks where it is easier. The
+        walk than a typical metre without trees, fountains and slope, and shrinks where it is easier. The
         grid is warped along with the city and tinted in the colours of the streets, so big red
         cells are heat-stressed areas and small teal cells cool ones.
       </p>
       <p className="small subtle">
-        The effect is exaggerated to make it visible (area grows with the heat cost to the power
-        of {layout.exaggeration}), so compare areas with each other, not with distances.
+        The effect is exaggerated to make it visible (area grows with the cost per metre to the
+        power of {layout.exaggeration}), so compare areas with each other, not with distances.
       </p>
       <dl className="mini-stats">
         <div>

@@ -50,10 +50,10 @@ export function RouteSection({ scheme, picking, onPick, onClear, canPick, routes
 function RouteResult({ routes, scheme }: { routes: RouteComparison; scheme: Scheme }) {
   const { shortest, coolest } = routes;
   const same = shortest.edges.join() === coolest.edges.join();
-  // heat stress = what the heat adds to the walking cost
-  const heatShortest = shortest.cost_m - shortest.length_m;
-  const heatCoolest = coolest.cost_m - coolest.length_m;
-  const avoided = heatShortest > 0 ? Math.round((1 - heatCoolest / heatShortest) * 100) : 0;
+  // extra strain = what heat and slope add to the walking cost
+  const extraShortest = shortest.cost_m - shortest.length_m;
+  const extraCoolest = coolest.cost_m - coolest.length_m;
+  const avoided = extraShortest > 0 ? Math.round((1 - extraCoolest / extraShortest) * 100) : 0;
   const longer = coolest.length_m - shortest.length_m;
   return (
     <>
@@ -65,7 +65,7 @@ function RouteResult({ routes, scheme }: { routes: RouteComparison; scheme: Sche
         {same
           ? "The shortest route is already the coolest one."
           : `The cool route is ${formatLength(longer)} (${Math.max(1, Math.round(coolest.minutes - shortest.minutes))} min) ` +
-            `longer and avoids ${avoided} % of the heat stress.`}
+            `longer and avoids ${avoided} % of the extra strain from heat and slope.`}
       </p>
     </>
   );

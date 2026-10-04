@@ -30,3 +30,6 @@ dist-ssr
 
 # pycache etc
 **__pycache__/
+
+# downloaded source data (terrain tiles), rebuilt by the scripts
+data/cache/

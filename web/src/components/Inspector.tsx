@@ -7,10 +7,11 @@ import {
   type GraphMeta,
   type NodeDetail,
 } from "../api";
-import { heatFactor, referenceMedian, type Relief } from "../costModel";
+import { costFactor, referenceMedian, type Factors } from "../costModel";
 import { categoryOf } from "../map/style";
 import {
   formatFountain,
+  formatGrade,
   formatHeatRatio,
   formatHighway,
   formatLength,
@@ -25,7 +26,7 @@ interface Props {
   selection: NonNullable<Selection>;
   meta: GraphMeta;
   profile: HeatProfile;
-  relief: Relief;
+  factors: Factors;
   onSelect: (s: Selection, focus?: boolean) => void;
   onNodeLoaded: (node: NodeDetail) => void;
 }
@@ -35,7 +36,7 @@ type Loaded =
   | { kind: "edge"; data: EdgeSummary }
   | { kind: "error"; message: string };
 
-export function Inspector({ selection, meta, profile, relief, onSelect, onNodeLoaded }: Props) {
+export function Inspector({ selection, meta, profile, factors, onSelect, onNodeLoaded }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export function Inspector({ selection, meta, profile, relief, onSelect, onNodeLo
           edge={current.data}
           model={meta.cost_model}
           profile={profile}
-          relief={relief}
+          factors={factors}
           onSelect={onSelect}
         />
       ) : (
@@ -93,18 +94,26 @@ function EdgeCard({
   edge,
   model,
   profile,
-  relief,
+  factors,
   onSelect,
 }: {
   edge: EdgeSummary;
   model: CostModel | null;
   profile: HeatProfile;
-  relief: Relief;
+  factors: Factors;
   onSelect: Props["onSelect"];
 }) {
   const factor =
     model && edge.heat_excess_sq_mean !== null
-      ? heatFactor(model, profile, relief, edge.heat_excess_sq_mean, edge.shade_share, edge.fountain_share)
+      ? costFactor(
+          model,
+          profile,
+          factors,
+          edge.heat_excess_sq_mean,
+          edge.shade_share,
+          edge.fountain_share,
+          edge.slope_excess,
+        )
       : null;
   return (
     <>
@@ -128,6 +137,9 @@ function EdgeCard({
       )}
       {edge.nearest_fountain_m !== null && (
         <p className="subtle small">{formatFountain(edge.nearest_fountain, edge.nearest_fountain_m)}</p>
+      )}
+      {edge.grade_mean !== null && edge.grade_max !== null && (
+        <p className="subtle small">{formatGrade(edge.grade_mean, edge.grade_max)}</p>
       )}
       <ul className="list">
         {(

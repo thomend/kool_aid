@@ -14,7 +14,7 @@ import type { Scheme } from "../map/basemap";
 import { ROUTE_POINTS_SOURCE, ROUTE_SOURCE, buildStyle, categoryOf } from "../map/style";
 import { formatHeatRatio, formatLength } from "../format";
 import type { HeatProfile } from "../profiles";
-import { heatFactor, referenceMedian, reliefKey, type Relief } from "../costModel";
+import { costFactor, referenceMedian, factorsKey, type Factors } from "../costModel";
 
 setWorkerUrl(workerUrl);
 
@@ -24,7 +24,7 @@ interface Props {
   meta: GraphMeta;
   scheme: Scheme;
   profile: HeatProfile;
-  relief: Relief;
+  factors: Factors;
   /** Route comparison to draw, if any. */
   routes: RouteComparison | null;
   /** Picking route points: clicks report a location instead of selecting. */
@@ -54,12 +54,20 @@ export function boundsOf(meta: GraphMeta): [[number, number], [number, number]] 
 }
 
 // Tooltip line for an edge feature's (flat) properties
-function edgeDetail(p: Record<string, any>, profile: HeatProfile, relief: Relief, meta: GraphMeta): string {
+function edgeDetail(p: Record<string, any>, profile: HeatProfile, factors: Factors, meta: GraphMeta): string {
   const model = meta.cost_model;
   if (!model || p.heat_excess_sq_mean === undefined) {
     return `${formatLength(p.length_m)} · ${p.highway.replace("_", " ")}`;
   }
-  const factor = heatFactor(model, profile, relief, p.heat_excess_sq_mean, p.shade_share, p.fountain_share);
+  const factor = costFactor(
+    model,
+    profile,
+    factors,
+    p.heat_excess_sq_mean,
+    p.shade_share,
+    p.fountain_share,
+    p.slope_excess,
+  );
   return [
     `${formatLength(p.length_m * factor)} cost`,
     formatHeatRatio(factor, referenceMedian(model, profile)),
@@ -71,7 +79,7 @@ export function MapView({
   meta,
   scheme,
   profile,
-  relief,
+  factors,
   routes,
   picking,
   onPick,
@@ -84,8 +92,8 @@ export function MapView({
   const mapRef = useRef<MapLibreMap | null>(null);
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
   // Latest callbacks, so map event handlers registered once never go stale
-  const handlers = useRef({ onSelect, onGraphLoaded, onPick, picking, profile, relief, meta });
-  handlers.current = { onSelect, onGraphLoaded, onPick, picking, profile, relief, meta };
+  const handlers = useRef({ onSelect, onGraphLoaded, onPick, picking, profile, factors, meta });
+  handlers.current = { onSelect, onGraphLoaded, onPick, picking, profile, factors, meta };
 
   // Create the map once
   useEffect(() => {
@@ -93,7 +101,7 @@ export function MapView({
     const pad = 0.06;
     const map = new MapLibreMap({
       container: container.current!,
-      style: buildStyle(scheme, meta.cost_model, profile, relief),
+      style: buildStyle(scheme, meta.cost_model, profile, factors),
       bounds: boundsOf(meta),
       fitBoundsOptions: { padding: 40 },
       maxBounds: [
@@ -158,7 +166,7 @@ export function MapView({
               x: e.point.x,
               y: e.point.y,
               title: p.street_name ?? categoryOf(p.highway).label,
-              detail: edgeDetail(p, handlers.current.profile, handlers.current.relief, handlers.current.meta),
+              detail: edgeDetail(p, handlers.current.profile, handlers.current.factors, handlers.current.meta),
             }
           : {
               x: e.point.x,
@@ -193,14 +201,14 @@ export function MapView({
     };
   }, []);
 
-  // Restyle on theme / heat profile / relief change (MapLibre diffs the styles).
+  // Restyle on theme / heat profile / factors change (MapLibre diffs the styles).
   // Skipped for the style the map was created with.
-  const key = `${scheme}|${profile}|${reliefKey(relief)}`;
+  const key = `${scheme}|${profile}|${factorsKey(factors)}`;
   const styleKey = useRef(key);
   useEffect(() => {
     if (key === styleKey.current) return;
     styleKey.current = key;
-    mapRef.current?.setStyle(buildStyle(scheme, meta.cost_model, profile, relief));
+    mapRef.current?.setStyle(buildStyle(scheme, meta.cost_model, profile, factors));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, meta]);
 

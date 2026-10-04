@@ -2,8 +2,8 @@ import type { CostModel, GraphMeta } from "../api";
 import type { Scheme } from "../map/basemap";
 import { HEAT_RATIOS, heatStops } from "../map/style";
 import { PROFILES, type HeatProfile } from "../profiles";
-import { NO_RELIEF, heatFactor, referenceMedian, type Relief } from "../costModel";
-import { CaneIcon, DropIcon, InfoIcon, RunIcon, TreeIcon, WalkIcon } from "./Icons";
+import { NO_FACTORS, costFactor, referenceMedian, type Factors } from "../costModel";
+import { CaneIcon, DropIcon, InfoIcon, RunIcon, SlopeIcon, TreeIcon, WalkIcon } from "./Icons";
 
 const PROFILE_ICONS: Record<HeatProfile, () => React.JSX.Element> = {
   low: RunIcon,
@@ -16,8 +16,8 @@ interface Props {
   scheme: Scheme;
   profile: HeatProfile;
   onProfileChange: (profile: HeatProfile) => void;
-  relief: Relief;
-  onReliefChange: (relief: Relief) => void;
+  factors: Factors;
+  onFactorsChange: (factors: Factors) => void;
   infoOpen: boolean;
   onToggleInfo: () => void;
   /** Extra sections (route comparison), shown above the legend. */
@@ -29,8 +29,8 @@ export function Panel({
   scheme,
   profile,
   onProfileChange,
-  relief,
-  onReliefChange,
+  factors,
+  onFactorsChange,
   infoOpen,
   onToggleInfo,
   children,
@@ -52,7 +52,7 @@ export function Panel({
         </button>
       </header>
       <ProfilePicker model={meta.cost_model} profile={profile} onChange={onProfileChange} />
-      <ReliefToggles relief={relief} onChange={onReliefChange} />
+      <FactorToggles factors={factors} onChange={onFactorsChange} />
       {children}
       <HeatLegend meta={meta} scheme={scheme} profile={profile} />
     </aside>
@@ -68,8 +68,8 @@ function ProfilePicker({
   profile: HeatProfile;
   onChange: (profile: HeatProfile) => void;
 }) {
-  // an unshaded street at 41 °C PET, for the caption
-  const factor = model && heatFactor(model, profile, NO_RELIEF, (41 - model.pet_threshold_c) ** 2, 0, 0);
+  // an unshaded, flat street at 41 °C PET, for the caption
+  const factor = model && costFactor(model, profile, NO_FACTORS, (41 - model.pet_threshold_c) ** 2, 0, 0, 0);
   return (
     <section className="panel-section">
       <h2 id="heat-sensitivity">Heat sensitivity</h2>
@@ -101,22 +101,23 @@ function ProfilePicker({
   );
 }
 
-const RELIEF_TOGGLES = [
+const FACTOR_TOGGLES = [
   { key: "trees", label: "Tree shade", Icon: TreeIcon },
   { key: "fountains", label: "Fountains", Icon: DropIcon },
+  { key: "slope", label: "Slope", Icon: SlopeIcon },
 ] as const;
 
-function ReliefToggles({ relief, onChange }: { relief: Relief; onChange: (relief: Relief) => void }) {
+function FactorToggles({ factors, onChange }: { factors: Factors; onChange: (factors: Factors) => void }) {
   return (
     <section className="panel-section">
       <h2>Count in</h2>
-      <div className="profiles toggles">
-        {RELIEF_TOGGLES.map(({ key, label, Icon }) => (
+      <div className="profiles">
+        {FACTOR_TOGGLES.map(({ key, label, Icon }) => (
           <button
             key={key}
-            aria-pressed={relief[key]}
-            className={`profile ${relief[key] ? "active" : ""}`}
-            onClick={() => onChange({ ...relief, [key]: !relief[key] })}
+            aria-pressed={factors[key]}
+            className={`profile ${factors[key] ? "active" : ""}`}
+            onClick={() => onChange({ ...factors, [key]: !factors[key] })}
           >
             <span className="profile-icon">
               <Icon />
@@ -137,7 +138,7 @@ function HeatLegend({ meta, scheme, profile }: { meta: GraphMeta; scheme: Scheme
   const reference = referenceMedian(model, profile);
   return (
     <section className="panel-section">
-      <h2>Heat cost per metre</h2>
+      <h2>Cost per metre</h2>
       <div className="legend">
         <div className="ramp" style={{ background: gradient }} />
         <div className="ramp-labels">
@@ -146,7 +147,7 @@ function HeatLegend({ meta, scheme, profile }: { meta: GraphMeta; scheme: Scheme
           ))}
         </div>
         <p className="subtle small">
-          Compared with a typical metre of Basel without trees and fountains, which costs{" "}
+          Compared with a typical metre of Basel without trees, fountains and slope, which costs{" "}
           {reference.toFixed(1)}× its length.
         </p>
       </div>

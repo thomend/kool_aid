@@ -9,7 +9,7 @@ import { PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck
 import type { CostSpaceData, GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
 import { ACCENT, NO_DATA, ROUTE_COLOR, categoryOf } from "../map/style";
-import { heatFactor, referenceMedian } from "../costModel";
+import { costFactor, referenceMedian } from "../costModel";
 import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
@@ -125,7 +125,7 @@ function prepareData(data: CostSpaceData) {
   };
 }
 
-// Cost-space positions part way (k) from one variant (profile, relief) to
+// Cost-space positions part way (k) from one variant (profile, factors) to
 // another. All variants share the same geometry, only the deltas differ.
 function blendPrepared(from: Prepared, to: Prepared, k: number): Prepared {
   const mix = <T extends { geo: Float32Array; delta: Float32Array }>(a: T, b: T): T => {
@@ -292,22 +292,30 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
   const palette = PALETTE[scheme];
   const accent = hexToRgba(ACCENT[scheme]);
 
-  // Heat factors of the profile and relief this layout was built for
-  const { profile, trees, fountains } = data.meta;
+  // Cost per metre of the profile and factors this layout was built for
+  const { profile, trees, fountains, slope } = data.meta;
   const model = meta.cost_model;
-  const factors = useMemo(() => {
+  const costPerMetre = useMemo(() => {
     const e = data.edges;
     if (!model) return e.ids.map(() => 1);
-    const relief = { trees, fountains };
+    const factors = { trees, fountains, slope };
     return e.ids.map((_, i) =>
-      heatFactor(model, profile, relief, e.heat_excess_sq_mean[i], e.shade_share[i], e.fountain_share[i]),
+      costFactor(
+        model,
+        profile,
+        factors,
+        e.heat_excess_sq_mean[i],
+        e.shade_share[i],
+        e.fountain_share[i],
+        e.slope_excess[i],
+      ),
     );
-  }, [data, model, profile, trees, fountains]);
+  }, [data, model, profile, trees, fountains, slope]);
   const edgeColors = useMemo(() => {
-    if (!model) return factors.map(() => hexToRgba(NO_DATA[scheme]));
+    if (!model) return costPerMetre.map(() => hexToRgba(NO_DATA[scheme]));
     const color = edgeColorFn(model, scheme, profile);
-    return factors.map((f) => color(f));
-  }, [factors, model, scheme, profile]);
+    return costPerMetre.map((f) => color(f));
+  }, [costPerMetre, model, scheme, profile]);
 
   // Cells take the street colour of the heat ratio their area stands for
   // (area = ratio ^ exaggeration), so cells and streets share one legend
@@ -558,8 +566,8 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
         y: info.y,
         title: data.edges.street_name[i] ?? categoryOf(data.edges.highway[i]).label,
         detail: [
-          formatLength(data.edges.length_m[i] * factors[i]) + " cost",
-          ...(model ? [formatHeatRatio(factors[i], referenceMedian(model, profile))] : []),
+          formatLength(data.edges.length_m[i] * costPerMetre[i]) + " cost",
+          ...(model ? [formatHeatRatio(costPerMetre[i], referenceMedian(model, profile))] : []),
           formatHighway(data.edges.highway[i]).toLowerCase(),
           ...(pet ? [pet] : []),
         ].join(" · "),

@@ -87,7 +87,7 @@ export const CaneIcon = () => (
   </svg>
 );
 
-// Relief toggles: tree shade and fountains
+// Factor toggles: tree shade, fountains, slope
 
 export const TreeIcon = () => (
   <svg {...base} width={20} height={20} strokeWidth={2.2}>
@@ -100,5 +100,11 @@ export const DropIcon = () => (
   <svg {...base} width={20} height={20} strokeWidth={2.2}>
     <path d="M12 3.5c3 3.6 6 6.9 6 10.5a6 6 0 0 1-12 0c0-3.6 3-6.9 6-10.5z" />
     <path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5" />
+  </svg>
+);
+
+export const SlopeIcon = () => (
+  <svg {...base} width={20} height={20} strokeWidth={2.2}>
+    <path d="M3 19L10 9l4 5 2.5-3L21 19z" />
   </svg>
 );

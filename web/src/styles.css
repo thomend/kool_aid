@@ -178,10 +178,6 @@ h1 {
   gap: 8px;
 }
 
-.profiles.toggles {
-  grid-template-columns: repeat(2, 1fr);
-}
-
 /* ---------- route comparison ---------- */
 
 .route-actions {
