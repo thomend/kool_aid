@@ -1,5 +1,5 @@
 import type { CostModel, GraphMeta, LayoutMeta } from "../api";
-import { NO_FACTORS, costFactor } from "../costModel";
+import { NO_FACTORS, costFactor, referenceMedian } from "../costModel";
 import { PROFILES } from "../profiles";
 import { CloseIcon } from "./Icons";
 
@@ -27,8 +27,9 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
 
       <p className="section-label">Colours</p>
       <p className="small">
-        Cost per metre, compared with a typical metre without trees, fountains and slope:{" "}
-        <strong>red</strong> is harder, <strong>teal</strong> easier.
+        Cost per metre, compared with a typical metre: <strong>red</strong> is harder,{" "}
+        <strong>teal</strong> easier.
+        {model && <> {typicalMetre(model)}</>}
       </p>
 
       <p className="section-label">Heat sensitivity</p>
@@ -63,6 +64,19 @@ export function InfoPopup({ meta, layout, onClose }: Props) {
         </p>
       )}
     </section>
+  );
+}
+
+/** What "typical" is: the median metre of the network without trees, fountains and slope. */
+function typicalMetre(model: CostModel): string {
+  const costs = PROFILES.map(({ key }) => times(referenceMedian(model, key)));
+  // the PET at which a sunny, flat street costs the reference (the same for every profile)
+  const scale = model.scale_c[PROFILES[0].key];
+  const pet = model.pet_threshold_c + scale * Math.sqrt(referenceMedian(model, PROFILES[0].key) - 1);
+  return (
+    `Typical is the median of Basel's network without trees, fountains and slope: like a sunny, ` +
+    `flat street at about ${Math.round(pet)} °C PET, costing ${costs.join(" / ")} its length ` +
+    `(low / medium / high). So a street can cost more than its length and still be below typical.`
   );
 }
 
