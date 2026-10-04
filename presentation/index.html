@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Walkable Basel — Team Kool Aid</title>
+  <title>Walkable Basel by Team Kool Aid</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
@@ -30,8 +30,19 @@
       color-scheme: light;
     }
 
-    /* Presentations stay on the light theme on purpose — consistent on any
-       projector or OS setting, regardless of prefers-color-scheme. */
+    :root[data-theme="dark"] {
+      --bg: #1b1c1f;
+      --text: #f5f5f7;
+      --text-2: #a1a1a6;
+      --text-3: #7c7c80;
+      --accent: #0a84ff;
+      --glass: rgba(36, 36, 40, 0.72);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+      --hairline: rgba(84, 84, 88, 0.5);
+      --fill: rgba(118, 118, 128, 0.24);
+      color-scheme: dark;
+    }
 
     * { box-sizing: border-box; }
 
@@ -272,34 +283,119 @@
       color: var(--text-3);
       background: transparent;
     }
+
+    /* ---------- hero slide: img1.png background with a darkening overlay ---------- */
+    .hero-slide {
+      position: relative;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      height: 100%;
+      /* override the theme variables for this slide only, so every element
+         that already reads --text/--accent/etc. stays legible on the photo */
+      --text: #f5f5f7;
+      --text-2: rgba(245, 245, 247, 0.78);
+      --text-3: rgba(245, 245, 247, 0.6);
+      --accent: #64d2ff;
+      --hairline: rgba(245, 245, 247, 0.25);
+    }
+    .hero-slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: url("img1.png") center / cover no-repeat;
+      z-index: 0;
+    }
+    .hero-slide::after {
+      /* softens the busy map photo so the title stays readable */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(10, 12, 16, 0.78), rgba(10, 12, 16, 0.55) 55%, rgba(10, 12, 16, 0.8));
+      z-index: 1;
+    }
+    .hero-slide.glass-card {
+      position: relative;
+      background: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border: 0;
+      box-shadow: none;
+      color: var(--text);
+    }
+    /* positioned content layer, so it paints above the ::before/::after image
+       and overlay (positioned descendants stack by z-index, not DOM order) */
+    .hero-slide > .hero-content {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      height: 100%;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    /* ---------- theme toggle, same markup/classes as the app's icon-button ---------- */
+    .theme-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 40;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      color: var(--text);
+      background: var(--glass);
+      backdrop-filter: saturate(180%) blur(24px);
+      -webkit-backdrop-filter: saturate(180%) blur(24px);
+      border: 0.5px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      transition: background 0.15s;
+    }
+    .theme-toggle:hover { background: var(--fill); }
+    .theme-toggle svg {
+      width: 18px;
+      height: 18px;
+    }
   </style>
 </head>
 <body>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark mode">
+    <svg id="theme-toggle-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+    </svg>
+  </button>
   <div class="reveal">
     <div class="slides">
 
       <!-- 1. Intro -->
       <section>
-        <div class="glass-card" style="justify-content: center; align-items: flex-start;">
-          <span class="kicker">hackamrhein · basel's urban heat problem</span>
-          <div class="panel-header">
-            <div class="app-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />
-                <path d="M9 21l2.5-6.5L14 17v4M7 12l2.5-4.5L13 8l2.5 3.5L18 12M11.5 14.5L12.5 8" />
-              </svg>
+        <div class="glass-card hero-slide">
+          <div class="hero-content">
+            <span class="kicker">hackamrhein · basel's urban heat problem</span>
+            <div class="panel-header">
+              <div class="app-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />
+                  <path d="M9 21l2.5-6.5L14 17v4M7 12l2.5-4.5L13 8l2.5 3.5L18 12M11.5 14.5L12.5 8" />
+                </svg>
+              </div>
+              <div>
+                <h1>Walkable Basel</h1>
+                <p class="subtle">Team Kool Aid's pedestrian network, coloured by heat</p>
+              </div>
             </div>
-            <div>
-              <h1>Walkable Basel</h1>
-              <p class="subtle">Team Kool Aid — the pedestrian network, coloured by heat</p>
+            <div class="mission">
+              <div class="section-label">The mission</div>
+              <p>
+                Every street in Basel, scored by how hard it is to walk on a hot afternoon
+                and how much shade or water would help.
+              </p>
             </div>
-          </div>
-          <div class="mission">
-            <div class="section-label">The mission</div>
-            <p>
-              Show planners and residents exactly which walking routes overheat —
-              street by street, not city by city.
-            </p>
           </div>
         </div>
       </section>
@@ -315,7 +411,7 @@
               <div class="section-label">The problem</div>
               <ul>
                 <li>Basel is already ~2°C warmer than pre-industrial times</li>
-                <li>A binding heat analysis exists (Stadtklimaanalyse) — but as a static, city-wide map</li>
+                <li>A binding heat analysis exists (Stadtklimaanalyse), but only as a static, city-wide map</li>
                 <li>It isn't matched to the streets people actually walk every day</li>
                 <li>No one has pointed at a route and said <em>"this one overheats"</em></li>
               </ul>
@@ -325,8 +421,8 @@
               <ul>
                 <li>Model Basel's <strong>walkable network</strong> as a graph</li>
                 <li>Nodes = intersections, edges = path segments</li>
-                <li>Each edge carries a <strong>cost</strong> — today length, next heat exposure (PET)</li>
-                <li>Make the hottest streets visible and explorable, not buried in a PDF</li>
+                <li>Each edge carries a <strong>cost</strong>: length, stretched by heat and eased by shade and fountains</li>
+                <li>Make the hottest streets visible and explorable</li>
               </ul>
             </div>
           </div>
@@ -346,14 +442,14 @@
                 <li>
                   <span class="swatch"></span>
                   <div>
-                    <strong>OpenStreetMap</strong> — walkable ways, rivers, district names
+                    <strong>OpenStreetMap</strong>: walkable ways, rivers, district names
                     <span class="footnote">Only source with the actual street-level pedestrian network · ODbL licence</span>
                   </div>
                 </li>
                 <li>
                   <span class="swatch"></span>
                   <div>
-                    <strong>Stadtklimaanalyse Basel-Stadt</strong> (geo.bs.ch) — PET heat-stress raster, today &amp; 2030, 10&nbsp;m cells
+                    <strong>Stadtklimaanalyse Basel-Stadt</strong> (geo.bs.ch): PET heat-stress raster, today &amp; 2030, 10&nbsp;m cells
                     <span class="footnote">Official, binding-for-planning dataset at the resolution a single street needs</span>
                   </div>
                 </li>
@@ -365,10 +461,10 @@
             <div>
               <div class="section-label">Approach</div>
               <ul>
-                <li><strong>Fetch</strong> — walkable ways via Overpass API, heat rasters (GeoTIFF) direct from geo.bs.ch</li>
-                <li><strong>Georaster join</strong> — sample each edge every metre along its geometry, reprojected to LV95, into a length-weighted mean PET</li>
-                <li><strong>Store</strong> — one <strong>DuckDB</strong> file holds the graph (vector) and the sampled heat cost (raster) side by side</li>
-                <li>Reproducible scripts, not notebooks — rerun end-to-end whenever the source data changes</li>
+                <li><strong>Fetch</strong>: walkable ways via Overpass API, heat rasters (GeoTIFF) direct from geo.bs.ch</li>
+                <li><strong>Georaster join</strong>: sample each edge every metre along its geometry, reprojected to LV95, into a length-weighted mean PET</li>
+                <li><strong>Store</strong>: one <strong>DuckDB</strong> file holds the graph (vector) and the sampled heat cost (raster) side by side</li>
+                <li>Reproducible scripts instead of notebooks, rerun end-to-end whenever the source data changes</li>
               </ul>
             </div>
           </div>
@@ -387,8 +483,8 @@
             <span class="seg-btn">Cost space</span>
           </div>
           <ul>
-            <li><strong>Geographic view</strong> — the graph on a calm map, edges coloured by cost</li>
-            <li><strong>Cost-space view</strong> — same graph, redrawn so on-screen length = cost</li>
+            <li><strong>Geographic view</strong>: the graph on a calm map, edges coloured by cost</li>
+            <li><strong>Cost-space view</strong>: same graph, redrawn so on-screen length equals cost</li>
             <li>Click any node or edge to inspect it; a slider morphs between the two</li>
           </ul>
           <p class="footnote mono">→ switching to localhost:5173 now</p>
@@ -405,7 +501,7 @@
             <div>
               <div class="section-label">Who &amp; why</div>
               <ul>
-                <li>Team Kool Aid — [names / backgrounds]</li>
+                <li>Team Kool Aid, [names / backgrounds]</li>
                 <li>Motivation: [add team motivation]</li>
               </ul>
               <div class="todo-flag">
@@ -415,9 +511,9 @@
             <div>
               <div class="section-label">How we worked</div>
               <ul>
-                <li>AI-assisted coding, strictly guided — architecture &amp; decisions stayed with us</li>
+                <li>AI helped write the code; architecture and decisions stayed with us</li>
                 <li><code>copilot-instructions.md</code> as the guardrail: simple FastAPI, no over-abstraction</li>
-                <li>Dev container — same Python 3.12 + Node 24 env for everyone, zero setup drift</li>
+                <li>Dev container: same Python 3.12 + Node 24 env for everyone, zero setup drift</li>
                 <li>Single DuckDB file as source of truth; additive-only, no silent schema changes</li>
               </ul>
             </div>
@@ -433,6 +529,36 @@
 
     </div>
   </div>
+
+  <script>
+    // Dark/light mode switch, mirroring App.tsx: defaults to the OS/browser
+    // preference, overridable by the toggle button for this session.
+    (function () {
+      const SUN = '<circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />';
+      const MOON = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />';
+      const query = window.matchMedia("(prefers-color-scheme: dark)");
+      const button = document.getElementById("theme-toggle");
+      const icon = document.getElementById("theme-toggle-icon");
+      let override = null;
+
+      const systemScheme = () => (query.matches ? "dark" : "light");
+      const scheme = () => override ?? systemScheme();
+
+      function apply() {
+        const s = scheme();
+        document.documentElement.dataset.theme = s;
+        icon.innerHTML = s === "dark" ? SUN : MOON;
+        button.setAttribute("aria-label", s === "dark" ? "Switch to light mode" : "Switch to dark mode");
+      }
+
+      button.addEventListener("click", () => {
+        override = scheme() === "dark" ? "light" : "dark";
+        apply();
+      });
+      query.addEventListener("change", apply);
+      apply();
+    })();
+  </script>
 
   <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
   <script>
