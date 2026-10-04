@@ -79,6 +79,14 @@ Without the Vite dev server: `cd web && npm run build`, then the API serves the 
 OSM, data.bs.ch, Stadtklima ──▶ scripts/ ──▶ data/basel.duckdb ──▶ api/ (FastAPI) ──▶ web/ (React, MapLibre, deck.gl)
 ```
 
+## Slides
+
+The pitch deck (`presentation/index.html`, reveal.js) needs no build step; serve the folder and forward the port:
+
+```bash
+cd presentation && python3 -m http.server 8000   # deck at http://localhost:8000
+```
+
 ## Rebuilding the data
 
 Only needed to refresh the data or after changing a script. From the repo root, in this order:
