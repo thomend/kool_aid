@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Walkable Basel by Team Kool Aid</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+
+  <style>
+    /* ---------- design tokens, copied from web/src/styles.css ---------- */
+    :root {
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+      --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+      --bg: #f4f2ee;
+      --text: #1d1d1f;
+      --text-2: #6e6e73;
+      --text-3: #8e8e93;
+      --accent: #007aff;
+      --glass: rgba(255, 255, 255, 0.72);
+      --glass-border: rgba(255, 255, 255, 0.65);
+      --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+      --hairline: rgba(60, 60, 67, 0.12);
+      --fill: rgba(118, 118, 128, 0.12);
+
+      --radius-lg: 22px;
+      --radius-md: 14px;
+      color-scheme: light;
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #1b1c1f;
+      --text: #f5f5f7;
+      --text-2: #a1a1a6;
+      --text-3: #7c7c80;
+      --accent: #0a84ff;
+      --glass: rgba(36, 36, 40, 0.72);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+      --hairline: rgba(84, 84, 88, 0.5);
+      --fill: rgba(118, 118, 128, 0.24);
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; height: 100%; }
+
+    body {
+      background:
+        radial-gradient(1200px 700px at 15% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%),
+        radial-gradient(900px 600px at 85% 90%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 60%),
+        var(--bg);
+    }
+
+    .reveal {
+      font-family: var(--font);
+      font-size: 26px;
+      line-height: 1.5;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .reveal .slides section {
+      text-align: left;
+      height: 100%;
+    }
+
+    .reveal h1, .reveal h2, .reveal h3 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      text-transform: none;
+      margin: 0;
+    }
+
+    /* ---------- the slide itself is a "glass" panel, like .panel in the app ---------- */
+    .glass-card {
+      background: var(--glass);
+      backdrop-filter: saturate(180%) blur(24px);
+      -webkit-backdrop-filter: saturate(180%) blur(24px);
+      border: 0.5px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      border-radius: var(--radius-lg);
+      padding: 56px 64px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+
+    .subtle { color: var(--text-2); }
+    .footnote { font-size: 0.68em; color: var(--text-3); }
+
+    code, .mono {
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    /* ---------- panel header: app icon + title, exactly like Panel.tsx ---------- */
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .app-icon {
+      width: 68px;
+      height: 68px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: linear-gradient(145deg, #34aadc, #007aff 55%, #5856d6);
+      box-shadow: 0 4px 12px rgba(0, 122, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      flex: none;
+    }
+
+    .app-icon svg { width: 34px; height: 34px; }
+
+    .panel-header h1 {
+      font-size: 2.3em;
+    }
+
+    .panel-header p {
+      font-size: 0.95em;
+      margin-top: 4px;
+    }
+
+    .kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.65em;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .slide-title {
+      font-size: 1.9em;
+    }
+
+    h2.section-label, .section-label {
+      font-size: 0.6em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-2);
+      margin-bottom: 4px;
+    }
+
+    .reveal ul {
+      margin: 0;
+      padding-left: 1.1em;
+    }
+    .reveal ul ul {
+      margin-top: 0.3em;
+      padding-left: 1.2em;
+    }
+    .reveal li {
+      margin-bottom: 0.55em;
+      font-size: 1em;
+    }
+    .reveal li::marker { color: var(--accent); }
+
+    .mission {
+      border-left: 3px solid var(--accent);
+      padding-left: 20px;
+    }
+    .mission .section-label { color: var(--accent); }
+    .mission p {
+      font-size: 1.15em;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      max-width: 34em;
+    }
+    .cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      flex: 1;
+      border-top: 0.5px solid var(--hairline);
+      padding-top: 18px;
+    }
+    .cols > div {
+      padding: 0 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .cols > div + div {
+      border-left: 0.5px solid var(--hairline);
+    }
+    .cols > div:first-child { padding-left: 0; }
+
+    /* ---------- legend-style rows (data sources), like .type-legend ---------- */
+    .source-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .source-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      font-size: 1em;
+    }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 0.4em;
+      flex: none;
+      background: var(--accent);
+    }
+    .source-list strong { font-weight: 600; }
+    .source-list .footnote { display: block; margin-top: 2px; }
+
+    /* ---------- segmented control mock, exact markup/classes from SegmentedControl ---------- */
+    .segmented {
+      position: relative;
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      padding: 3px;
+      border-radius: 11px;
+      background: var(--fill);
+      width: 440px;
+    }
+    .segmented-thumb {
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      left: 3px;
+      width: calc((100% - 6px) / 2);
+      border-radius: 8px;
+      background: var(--glass);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+    }
+    .segmented-thumb.pos-1 { transform: translateX(100%); }
+    .segmented span.seg-btn {
+      position: relative;
+      padding: 12px 16px;
+      font-size: 1em;
+      font-weight: 500;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .segmented span.seg-btn.active { font-weight: 600; }
+
+    /* ---------- tech badges, like .badge ---------- */
+    .pill-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      font-size: 0.68em;
+      font-weight: 600;
+      padding: 7px 16px;
+      border-radius: 999px;
+      background: var(--fill);
+      color: var(--text-2);
+    }
+
+    .todo-flag {
+      font-size: 0.75em;
+      color: var(--text-2);
+      border-left: 2px solid var(--accent);
+      padding-left: 12px;
+    }
+
+    /* ---------- reveal chrome, tinted to match ---------- */
+    .reveal .progress { color: var(--accent); }
+    .reveal .controls { color: var(--accent); }
+    .reveal .slide-number {
+      font-family: var(--mono);
+      color: var(--text-3);
+      background: transparent;
+    }
+
+    /* ---------- hero slide: img1.png background with a darkening overlay ---------- */
+    .hero-slide {
+      position: relative;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      height: 100%;
+      /* override the theme variables for this slide only, so every element
+         that already reads --text/--accent/etc. stays legible on the photo */
+      --text: #f5f5f7;
+      --text-2: rgba(245, 245, 247, 0.78);
+      --text-3: rgba(245, 245, 247, 0.6);
+      --accent: #64d2ff;
+      --hairline: rgba(245, 245, 247, 0.25);
+    }
+    .hero-slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: url("img1.png") center / cover no-repeat;
+      z-index: 0;
+    }
+    .hero-slide::after {
+      /* softens the busy map photo so the title stays readable */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(10, 12, 16, 0.78), rgba(10, 12, 16, 0.55) 55%, rgba(10, 12, 16, 0.8));
+      z-index: 1;
+    }
+    .hero-slide.glass-card {
+      position: relative;
+      background: none;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border: 0;
+      box-shadow: none;
+      color: var(--text);
+    }
+    /* positioned content layer, so it paints above the ::before/::after image
+       and overlay (positioned descendants stack by z-index, not DOM order) */
+    .hero-slide > .hero-content {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      height: 100%;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    /* ---------- theme toggle, same markup/classes as the app's icon-button ---------- */
+    .theme-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 40;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      color: var(--text);
+      background: var(--glass);
+      backdrop-filter: saturate(180%) blur(24px);
+      -webkit-backdrop-filter: saturate(180%) blur(24px);
+      border: 0.5px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      transition: background 0.15s;
+    }
+    .theme-toggle:hover { background: var(--fill); }
+    .theme-toggle svg {
+      width: 18px;
+      height: 18px;
+    }
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark mode">
+    <svg id="theme-toggle-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+    </svg>
+  </button>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- 1. Intro -->
+      <section>
+        <div class="glass-card hero-slide">
+          <div class="hero-content">
+            <span class="kicker">hackamrhein · basel's urban heat problem</span>
+            <div class="panel-header">
+              <div class="app-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />
+                  <path d="M9 21l2.5-6.5L14 17v4M7 12l2.5-4.5L13 8l2.5 3.5L18 12M11.5 14.5L12.5 8" />
+                </svg>
+              </div>
+              <div>
+                <h1>Walkable Basel</h1>
+                <p class="subtle">Team Kool Aid's pedestrian network, coloured by heat</p>
+              </div>
+            </div>
+            <div class="mission">
+              <div class="section-label">The mission</div>
+              <p>
+                Every street in Basel, scored by how hard it is to walk on a hot afternoon
+                and how much shade or water would help.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Challenge & approach -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">Our focus: urban heat</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">The problem</div>
+              <ul>
+                <li>Basel summers are getting hotter, and heat hits people on foot directly</li>
+                <li>500 m in sun is far harder than 500 m in shade, sometimes dangerous for the elderly, children or anyone with a heart condition</li>
+                <li>A binding heat analysis exists (Stadtklimaanalyse), but only as a static, city-wide map</li>
+                <li>For <strong>city planners</strong>: no way to point at a route and say <em>"this one overheats"</em></li>
+              </ul>
+            </div>
+            <div>
+              <div class="section-label">Our approach</div>
+              <ul>
+                <li>Model Basel's <strong>walkable network</strong> as a graph</li>
+                <li>Nodes = intersections, edges = path segments</li>
+                <li>Each edge carries a <strong>cost</strong>: length and slope, increased by heat and eased by shade and fountains</li>
+                <li>Make the hottest streets visible and explorable</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Data -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">Data, and our approach to it</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">Data</div>
+              <ul class="source-list">
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>OpenStreetMap</strong>: ways, rivers, names, bridges &amp; tunnels</div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>Stadtklimaanalyse</strong> (geo.bs.ch): PET heat raster, 10&nbsp;m</div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>Tree cadastre &amp; fountains</strong> (data.bs.ch): shade and water</div>
+                </li>
+                <li>
+                  <span class="swatch"></span>
+                  <div><strong>swissALTI3D</strong> (swisstopo): 2&nbsp;m terrain, for slope</div>
+                </li>
+              </ul>
+              <div class="todo-flag">
+                Planned next: the 2030 heat scenario, already in the data.
+              </div>
+            </div>
+            <div>
+              <div class="section-label">Approach</div>
+              <ul>
+                <li><strong>Fetch</strong> from each source's API or download</li>
+                <li><strong>Join</strong> every edge to PET, shade, fountains and slope</li>
+                <li><strong>Store</strong> it all in one <strong>DuckDB</strong> file</li>
+                <li>Scripts, not notebooks: rerun end-to-end on new data</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Demo bridge -->
+      <section>
+        <div class="glass-card" style="justify-content: center;">
+          <div class="panel-header">
+            <h2 class="slide-title">From slides to the live app</h2>
+          </div>
+          <div class="segmented">
+            <div class="segmented-thumb"></div>
+            <span class="seg-btn active">Geographic</span>
+            <span class="seg-btn">Cost space</span>
+          </div>
+          <ul>
+            <li><strong>Geographic view</strong>: the graph on a calm map, edges coloured by cost</li>
+            <li><strong>Cost-space view</strong>: same graph, redrawn so on-screen length equals cost</li>
+            <li>Click a street for its cost breakdown, or an intersection to compare the streets that meet there</li>
+            <li><strong>Compare routes</strong>: shortest versus coolest, and the extra strain the cool one avoids</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 5. The hackathon -->
+      <section>
+        <div class="glass-card">
+          <div class="panel-header">
+            <h2 class="slide-title">How we built it, and what we learned</h2>
+          </div>
+          <div class="cols">
+            <div>
+              <div class="section-label">Who</div>
+              <ul>
+                <li>Joel Gschwind, Software Engineer</li>
+                <li>Sinan Laubscher, Data &amp; Analytics Intern</li>
+                <li>Thomas Mendelin, Data Product Engineer</li>
+              </ul>
+            </div>
+            <div>
+              <div class="section-label">How we worked</div>
+              <ul>
+                <li>AI helped write the code; architecture and decisions stayed with us</li>
+                <li><code>copilot-instructions.md</code> as the guardrail: simple FastAPI, no over-abstraction</li>
+                <li>Dev container: same Python 3.12 + Node 24 env for everyone, zero setup drift</li>
+                <li>Single DuckDB file as source of truth; additive-only, no silent schema changes</li>
+              </ul>
+            </div>
+          </div>
+          <div class="pill-row">
+            <span class="pill">Python + DuckDB</span>
+            <span class="pill">FastAPI</span>
+            <span class="pill">React + TypeScript</span>
+            <span class="pill">MapLibre + deck.gl</span>
+            <span class="pill">Devcontainer</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script>
+    // Dark/light mode switch, mirroring App.tsx: defaults to the OS/browser
+    // preference, overridable by the toggle button for this session.
+    (function () {
+      const SUN = '<circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />';
+      const MOON = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />';
+      const query = window.matchMedia("(prefers-color-scheme: dark)");
+      const button = document.getElementById("theme-toggle");
+      const icon = document.getElementById("theme-toggle-icon");
+      let override = null;
+
+      const systemScheme = () => (query.matches ? "dark" : "light");
+      const scheme = () => override ?? systemScheme();
+
+      function apply() {
+        const s = scheme();
+        document.documentElement.dataset.theme = s;
+        icon.innerHTML = s === "dark" ? SUN : MOON;
+        button.setAttribute("aria-label", s === "dark" ? "Switch to light mode" : "Switch to dark mode");
+      }
+
+      button.addEventListener("click", () => {
+        override = scheme() === "dark" ? "light" : "dark";
+        apply();
+      });
+      query.addEventListener("change", apply);
+      apply();
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      controls: true,
+      progress: true,
+      center: false,
+      transition: 'fade',
+      backgroundTransition: 'fade',
+      width: 1280,
+      height: 720,
+      margin: 0.06,
+    });
+  </script>
+</body>
+</html>
