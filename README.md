@@ -55,7 +55,7 @@ Colours, cost space and routes use the same formula. Colours and cost space are 
 | Data | Source |
 |---|---|
 | Walkable ways, rivers, district names | [OpenStreetMap](https://www.openstreetmap.org) via the Overpass API |
-| Heat stress: PET at 14:00, 10 m raster (today; 2030 also in the repo, not yet used) | Stadtklimaanalyse Basel-Stadt, Humanbioklimatische Situation (`data/KL_Stadtklima_*`) |
+| Heat stress: PET at 14:00, 10 m raster (today; 2030 also in the repo, not yet used) | Stadtklimaanalyse Basel-Stadt, Humanbioklimatische Situation (`data/KL_Stadtklima_*`), License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/) |
 | Public trees (tree cadastre) | [data.bs.ch, dataset 100052](https://data.bs.ch/explore/assets/100052/) |
 | Bathing, drinking and decorative fountains | [data.bs.ch, dataset 100008](https://data.bs.ch/explore/assets/100008/) |
 | Terrain (2 m digital terrain model) | [swisstopo swissALTI3D](https://www.swisstopo.admin.ch/en/height-model-swissalti3d), downloaded into `data/cache/` (not in git) |
