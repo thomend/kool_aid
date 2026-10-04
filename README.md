@@ -18,21 +18,22 @@ Show where walking in Basel is hard in the heat, how much harder, and what trees
 
 ## How we achieve it
 
-The walkable network (paths, sidewalks, streets) is a graph: intersections are nodes, the sections between them edges. Every edge gets a **walking cost**: its length, stretched by heat stress and softened by tree shade and nearby fountains. The web app shows it in two views:
+The walkable network (paths, sidewalks, streets) is a graph: intersections are nodes, the sections between them edges. Every edge gets a **walking cost**: its length, stretched by heat stress and slope, and softened by tree shade and nearby fountains. The web app shows it in two views:
 
-- **Geographic**: the network on a map, each street coloured by heat cost per metre (teal = cooler, red = hotter than a typical metre). Click a street for details: cost, PET, tree shade, nearest fountain.
+- **Geographic**: the network on a map, each street coloured by cost per metre (teal = easier, red = harder than a typical metre). Click a street to see why it costs what it does: what heat, tree shade, a nearby fountain and slope each add or take off. Click an intersection to compare the streets that meet there.
 - **Cost space**: Basel as it feels on a hot afternoon. A cartogram grows every neighbourhood by how much harder it is to walk there and shrinks it where it is easier; streets, rivers, labels and a tinted grid warp with it. A slider morphs between map and cost space.
 
 In the panel:
 
 - **Heat sensitivity** (low, medium, high) sets how strongly heat counts.
-- **Count in** switches tree shade and fountains on or off, to see what they change.
-- **Compare routes**: pick two points to see the shortest route next to the coolest one, how much longer the cool one is and how much heat stress it avoids.
+- **Count in** switches tree shade, fountains and slope on or off, to see what they change. Switched-on factors also appear on the map with the same icons when zoomed in: fountains, trees and steep streets (≥ 6 %), with tooltips for tree species and fountain names.
+- **Compare routes**: pick two points to see the shortest route next to the coolest one, how much longer the cool one is and how much of the extra strain from heat and slope it avoids.
 
 ## How costs are calculated
 
 ```
-cost   = length × (1 + heat_excess × relief / scale²)
+cost   = length × slope × (1 + heat_excess × relief / scale²)
+slope  = 1 + weight × slope_excess
 relief = (1 − 0.5 × shade_share) × (1 − 0.2 × fountain_share)
 ```
 
@@ -41,8 +42,13 @@ relief = (1 − 0.5 × shade_share) × (1 − 0.2 × fountain_share)
 - **shade_share**: share of the edge under a public tree's crown (within 6 m, 9 m from street centrelines). Full shade halves the heat part.
 - **fountain_share**: share of the edge within 100 m of a fountain. A fountain within reach removes a fifth of the heat part.
 - Relief only lowers the heat part, so missing trees or fountains never add cost.
+- **slope_excess**: how much longer walking takes than on the flat, from Tobler's hiking function made symmetric (uphill = downhill): +19 % at 5 %, +42 % at 10 % gradient, measured every 5 m. **weight** per profile: 0.5 (low), 1 (medium), 2 (high). Slope multiplies the whole cost: walking slower also means longer in the heat. On bridges and tunnels the height is interpolated between their ends.
 
-Colours, cost space and routes use the same formula. Colours and cost space are measured against a fixed reference, the median cost per metre **without** trees and fountains, so switching them on visibly cools the city down. In the cost space, area grows with (cost per metre ÷ reference)⁶. This exaggerates the effect to make it visible, so compare areas with each other, not with distances. Details: [scripts/cost_model.py](scripts/cost_model.py), [scripts/build_layout.py](scripts/build_layout.py).
+Colours, cost space and routes use the same formula. Colours and cost space are measured against a fixed reference, the median cost per metre **without** trees, fountains and slope, so switching a factor on visibly changes the city. In the cost space, area grows with a high power of (cost per metre ÷ reference), set by `EXAGGERATION`. This exaggerates the effect to make it visible, so compare areas with each other, not with distances. Details: [scripts/cost_model.py](scripts/cost_model.py), [scripts/build_layout.py](scripts/build_layout.py).
+
+## Technical documentation
+
+[docs/technical.md](docs/technical.md) covers the software architecture, the technologies, the procedures behind each feature (graph building, data joins, cost model, cartogram, routing), what is stored where, and what the PET heat data contains.
 
 ## Data
 
@@ -52,6 +58,8 @@ Colours, cost space and routes use the same formula. Colours and cost space are 
 | Heat stress: PET at 14:00, 10 m raster (today; 2030 also in the repo, not yet used) | Stadtklimaanalyse Basel-Stadt, Humanbioklimatische Situation (`data/KL_Stadtklima_*`) |
 | Public trees (tree cadastre) | [data.bs.ch, dataset 100052](https://data.bs.ch/explore/assets/100052/) |
 | Bathing, drinking and decorative fountains | [data.bs.ch, dataset 100008](https://data.bs.ch/explore/assets/100008/) |
+| Terrain (2 m digital terrain model) | [swisstopo swissALTI3D](https://www.swisstopo.admin.ch/en/height-model-swissalti3d), downloaded into `data/cache/` (not in git) |
+| Bridges and tunnels | OpenStreetMap via the Overpass API |
 | Basemap tiles | [OpenFreeMap](https://openfreemap.org) |
 
 Everything is prepared in one DuckDB file, `data/basel.duckdb`, which is in the repo.
@@ -82,10 +90,11 @@ python scripts/build_graph.py              # nodes and edges                 -> 
 python scripts/join_stadtklima_edges.py    # PET along each edge             -> edge_stadtklima
 python scripts/join_trees_edges.py         # tree cadastre, shade per edge   -> trees, edge_trees
 python scripts/join_fountains_edges.py     # fountains, reach per edge       -> fountains, edge_fountains
-python scripts/build_layout.py             # costs + cartograms (~2.5 min)   -> edge_heat, cost_model, layout_warp, layout_meta
+python scripts/join_slope_edges.py         # terrain, gradient per edge      -> way_structures, edge_slope
+python scripts/build_layout.py             # costs + cartograms (~8 min)     -> edge_heat, cost_model, layout_warp, layout_meta
 ```
 
-The `fetch_` scripts and the first run of the tree and fountain scripts need internet access. Edge ids change with every `build_graph.py` run, so rerun the `join_` scripts with `--replace` afterwards. Then reload the running API: `curl -X POST localhost:8050/api/graph/reload`.
+The `fetch_` scripts and the first run of the tree, fountain and slope scripts need internet access. Edge ids change with every `build_graph.py` run, so rerun the `join_` scripts with `--replace` afterwards. Then reload the running API: `curl -X POST localhost:8050/api/graph/reload`.
 
 ## API
 
@@ -93,9 +102,10 @@ The `fetch_` scripts and the first run of the tree and fountain scripts need int
 |---|---|
 | `GET /api/graph/meta` | Counts, bounds, cost-model constants |
 | `GET /api/graph/edges` · `/nodes` | The whole graph as GeoJSON |
+| `GET /api/graph/factors` | Trees (species, age) and fountains (name) as GeoJSON points |
 | `GET /api/graph/edges/{id}` · `/nodes/{id}` | One edge or node |
-| `GET /api/layout/cost-space?profile=medium&trees=true&fountains=true` | Map and cost-space positions for a profile and relief variant |
-| `GET /api/route?start=lon,lat&end=lon,lat&profile=medium&trees=true&fountains=true` | Shortest and coolest walking route between two points |
+| `GET /api/layout/cost-space?profile=medium&trees=true&fountains=true&slope=true` | Map and cost-space positions for a profile and factor variant |
+| `GET /api/route?start=lon,lat&end=lon,lat&profile=medium&trees=true&fountains=true&slope=true` | Shortest and coolest walking route between two points |
 | `POST /api/graph/reload` | Reload the database after a rebuild |
 
 ## Good to know

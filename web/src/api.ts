@@ -1,6 +1,6 @@
 // Typed client for the FastAPI backend (api/graph.py).
 
-import type { Relief } from "./costModel";
+import type { Factors } from "./costModel";
 import type { HeatProfile } from "./profiles";
 
 interface Bounds {
@@ -16,7 +16,8 @@ export interface CostModel {
   shade_effect: number;
   fountain_effect: number;
   scale_c: Record<HeatProfile, number>;
-  /** Median heat factor without trees and fountains: the fixed reference for colours and layout. */
+  slope_weight: Record<HeatProfile, number>;
+  /** Median cost per metre without trees, fountains and slope: the fixed reference for colours and layout. */
   reference_median: Record<HeatProfile, number>;
 }
 
@@ -55,6 +56,11 @@ export interface EdgeSummary {
   nearest_fountain_m: number | null;
   /** 0..1, share of the length within 100 m of a fountain; softens the heat cost. */
   fountain_share: number | null;
+  /** Extra walking time for the slope (0.19 = 19 % at 5 %); null without slope data. */
+  slope_excess: number | null;
+  /** Mean and steepest |gradient| (0.05 = 5 %). */
+  grade_mean: number | null;
+  grade_max: number | null;
 }
 
 export interface NodeDetail {
@@ -70,6 +76,7 @@ export interface NodeDetail {
 
 export const EDGES_URL = "/api/graph/edges";
 export const NODES_URL = "/api/graph/nodes";
+export const FACTORS_URL = "/api/graph/factors";
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
@@ -89,12 +96,14 @@ export interface LayoutMeta {
   profile: HeatProfile;
   trees: boolean;
   fountains: boolean;
+  slope: boolean;
   built_at: string;
   cost: string;
   scale_c: number;
-  /** Edges are laid out at cost / this: the median without trees and fountains. */
+  slope_weight: number;
+  /** Cost per metre 1 in the layout: the median without trees, fountains and slope. */
   reference_median: number;
-  /** This variant's own median heat factor. */
+  /** This variant's own median cost per metre. */
   heat_factor_median: number;
   /** Target area = (heat ratio) ^ exaggeration. */
   exaggeration: number;
@@ -132,6 +141,7 @@ export interface CostSpaceData {
     heat_excess_sq_mean: number[];
     shade_share: number[];
     fountain_share: number[];
+    slope_excess: number[];
     start_indices: number[];
     geo: number[];
     cost: number[];
@@ -146,9 +156,11 @@ export interface CostSpaceData {
   };
 }
 
-export const fetchCostSpace = (profile: HeatProfile, relief: Relief, signal?: AbortSignal) =>
+const factorParams = (f: Factors) => `trees=${f.trees}&fountains=${f.fountains}&slope=${f.slope}`;
+
+export const fetchCostSpace = (profile: HeatProfile, factors: Factors, signal?: AbortSignal) =>
   getJson<CostSpaceData>(
-    `/api/layout/cost-space?profile=${profile}&trees=${relief.trees}&fountains=${relief.fountains}`,
+    `/api/layout/cost-space?profile=${profile}&${factorParams(factors)}`,
     signal,
   );
 
@@ -159,7 +171,7 @@ export interface Route {
   /** [lon, lat] from start to end */
   coordinates: [number, number][];
   length_m: number;
-  /** Walking cost with heat for the profile and relief asked for */
+  /** Walking cost with heat for the profile and factors asked for */
   cost_m: number;
   minutes: number;
   shade_share: number;
@@ -182,12 +194,12 @@ export async function fetchRoute(
   start: [number, number],
   end: [number, number],
   profile: HeatProfile,
-  relief: Relief,
+  factors: Factors,
   signal?: AbortSignal,
 ): Promise<RouteComparison> {
   const url =
     `/api/route?start=${start.join(",")}&end=${end.join(",")}` +
-    `&profile=${profile}&trees=${relief.trees}&fountains=${relief.fountains}`;
+    `&profile=${profile}&${factorParams(factors)}`;
   const res = await fetch(url, { signal });
   if (!res.ok) {
     // the API explains what's wrong (too far from the network, same point, ...)

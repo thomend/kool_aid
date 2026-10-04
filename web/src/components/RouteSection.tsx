@@ -18,19 +18,24 @@ interface Props {
 }
 
 export function RouteSection({ scheme, picking, onPick, onClear, canPick, routes, loading, error }: Props) {
+  // instructions only while picking; the explanation is in the info popup
   const hint =
     picking === "start"
       ? "Click the start on the map. Esc to stop."
       : picking === "end"
         ? "Now click the destination."
-        : !canPick
-          ? "Switch to the geographic view to pick points."
-          : "The shortest and the coolest walk between two points, e.g. a school route.";
+        : null;
   return (
     <section className="panel-section">
       <h2>Compare routes</h2>
       <div className="route-actions">
-        <button className="pill-button" disabled={!canPick} onClick={onPick} aria-pressed={picking !== "off"}>
+        <button
+          className="pill-button"
+          disabled={!canPick}
+          title={canPick ? undefined : "Switch to the geographic view to pick points"}
+          onClick={onPick}
+          aria-pressed={picking !== "off"}
+        >
           {routes ? "Pick new points" : "Pick start and destination"}
         </button>
         {(routes || error) && (
@@ -39,7 +44,7 @@ export function RouteSection({ scheme, picking, onPick, onClear, canPick, routes
           </button>
         )}
       </div>
-      <p className="subtle small">{hint}</p>
+      {hint && <p className="subtle small">{hint}</p>}
       {loading && <p className="subtle small">Finding routes…</p>}
       {error && <p className="small route-error">{error}</p>}
       {routes && !loading && <RouteResult routes={routes} scheme={scheme} />}
@@ -50,10 +55,10 @@ export function RouteSection({ scheme, picking, onPick, onClear, canPick, routes
 function RouteResult({ routes, scheme }: { routes: RouteComparison; scheme: Scheme }) {
   const { shortest, coolest } = routes;
   const same = shortest.edges.join() === coolest.edges.join();
-  // heat stress = what the heat adds to the walking cost
-  const heatShortest = shortest.cost_m - shortest.length_m;
-  const heatCoolest = coolest.cost_m - coolest.length_m;
-  const avoided = heatShortest > 0 ? Math.round((1 - heatCoolest / heatShortest) * 100) : 0;
+  // extra strain = what heat and slope add to the walking cost
+  const extraShortest = shortest.cost_m - shortest.length_m;
+  const extraCoolest = coolest.cost_m - coolest.length_m;
+  const avoided = extraShortest > 0 ? Math.round((1 - extraCoolest / extraShortest) * 100) : 0;
   const longer = coolest.length_m - shortest.length_m;
   return (
     <>
@@ -65,7 +70,7 @@ function RouteResult({ routes, scheme }: { routes: RouteComparison; scheme: Sche
         {same
           ? "The shortest route is already the coolest one."
           : `The cool route is ${formatLength(longer)} (${Math.max(1, Math.round(coolest.minutes - shortest.minutes))} min) ` +
-            `longer and avoids ${avoided} % of the heat stress.`}
+            `longer and avoids ${avoided} % of the extra strain from heat and slope.`}
       </p>
     </>
   );

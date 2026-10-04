@@ -12,7 +12,7 @@ import {
 import { RouteSection, type RoutePicking } from "./components/RouteSection";
 import type { Scheme } from "./map/basemap";
 import { DEFAULT_PROFILE, type HeatProfile } from "./profiles";
-import { FULL_RELIEF, reliefKey, type Relief } from "./costModel";
+import { ALL_FACTORS, factorsKey, type Factors } from "./costModel";
 import { MapView, boundsOf, type Selection } from "./components/MapView";
 import { Panel } from "./components/Panel";
 import { InfoPopup } from "./components/InfoPopup";
@@ -24,7 +24,7 @@ import { MinusIcon, MoonIcon, PlusIcon, RecenterIcon, SunIcon } from "./componen
 
 type View = "geographic" | "cost-space";
 
-const variantKey = (p: HeatProfile, r: Relief) => `${p}|${reliefKey(r)}`;
+const variantKey = (p: HeatProfile, r: Factors) => `${p}|${factorsKey(r)}`;
 
 // deck.gl is only needed for the cost-space view, so load it on demand
 const CostSpaceView = lazy(() =>
@@ -55,7 +55,7 @@ export default function App() {
   const [graphLoaded, setGraphLoaded] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [profile, setProfile] = useState<HeatProfile>(DEFAULT_PROFILE);
-  const [relief, setRelief] = useState<Relief>(FULL_RELIEF);
+  const [factors, setFactors] = useState<Factors>(ALL_FACTORS);
   const [view, setView] = useState<View>("geographic");
   const [selection, setSelection] = useState<Selection>(null);
 
@@ -95,10 +95,10 @@ export default function App() {
     setCostReady(handle !== null);
   }, []);
   const [costData, setCostData] = useState<CostSpaceData | null>(null);
-  // One cost space per profile and relief, fetched once each
+  // One cost space per profile and factors, fetched once each
   const costCache = useRef(new Map<string, Promise<CostSpaceData>>());
-  const variantRef = useRef(variantKey(profile, relief));
-  variantRef.current = variantKey(profile, relief);
+  const variantRef = useRef(variantKey(profile, factors));
+  variantRef.current = variantKey(profile, factors);
   const hasCostData = useRef(false);
   hasCostData.current = costData !== null;
   const [costStatus, setCostStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -131,8 +131,8 @@ export default function App() {
     [setMorph],
   );
 
-  // Fetches (once per variant) and shows the cost space of a profile and relief
-  const loadCostSpace = useCallback((p: HeatProfile, r: Relief) => {
+  // Fetches (once per variant) and shows the cost space of a profile and factors
+  const loadCostSpace = useCallback((p: HeatProfile, r: Factors) => {
     const key = variantKey(p, r);
     let request = costCache.current.get(key);
     if (!request) {
@@ -154,16 +154,20 @@ export default function App() {
         if (!hasCostData.current) setView("geographic");
       });
   }, []);
-  const changeVariant = (p: HeatProfile, r: Relief) => {
+  const changeVariant = (p: HeatProfile, r: Factors) => {
     setProfile(p);
-    setRelief(r);
+    setFactors(r);
     variantRef.current = variantKey(p, r);
     if (view === "cost-space") loadCostSpace(p, r);
   };
-  const changeProfile = (next: HeatProfile) => next !== profile && changeVariant(next, relief);
-  const changeRelief = (next: Relief) => changeVariant(profile, next);
+  const changeProfile = (next: HeatProfile) => next !== profile && changeVariant(next, factors);
+  const changeFactors = (next: Factors) => changeVariant(profile, next);
   const shownVariant = costData
-    ? variantKey(costData.meta.profile, { trees: costData.meta.trees, fountains: costData.meta.fountains })
+    ? variantKey(costData.meta.profile, {
+        trees: costData.meta.trees,
+        fountains: costData.meta.fountains,
+        slope: costData.meta.slope,
+      })
     : null;
 
   const switchView = (next: View) => {
@@ -171,7 +175,7 @@ export default function App() {
     setView(next);
     if (next === "cost-space") {
       setPicking("off"); // picking only works on the map
-      if (shownVariant !== variantKey(profile, relief)) loadCostSpace(profile, relief);
+      if (shownVariant !== variantKey(profile, factors)) loadCostSpace(profile, factors);
       return; // entering happens in the effect below, once the view is mounted
     }
     // Back to geography: unmorph, then hand the camera over to the map
@@ -220,13 +224,13 @@ export default function App() {
     return () => ctrl.abort();
   }, []);
 
-  // Routes for the picked points, again whenever the profile or relief changes
+  // Routes for the picked points, again whenever the profile or factors changes
   useEffect(() => {
     if (!routeEnds?.end) return;
     const ctrl = new AbortController();
     setRouteLoading(true);
     setRouteError(null);
-    fetchRoute(routeEnds.start, routeEnds.end, profile, relief, ctrl.signal)
+    fetchRoute(routeEnds.start, routeEnds.end, profile, factors, ctrl.signal)
       .then((r) => {
         setRoutes(r);
         setRouteLoading(false);
@@ -238,7 +242,7 @@ export default function App() {
         setRouteLoading(false);
       });
     return () => ctrl.abort();
-  }, [routeEnds, profile, relief]);
+  }, [routeEnds, profile, factors]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -296,7 +300,7 @@ export default function App() {
           meta={meta}
           scheme={scheme}
           profile={profile}
-          relief={relief}
+          factors={factors}
           routes={routes}
           picking={picking !== "off"}
           onPick={pick}
@@ -331,8 +335,8 @@ export default function App() {
           scheme={scheme}
           profile={profile}
           onProfileChange={changeProfile}
-          relief={relief}
-          onReliefChange={changeRelief}
+          factors={factors}
+          onFactorsChange={changeFactors}
           infoOpen={infoOpen}
           onToggleInfo={() => setInfoOpen((o) => !o)}
         >
@@ -399,8 +403,9 @@ export default function App() {
         <Inspector
           selection={selection}
           meta={meta}
+          scheme={scheme}
           profile={profile}
-          relief={relief}
+          factors={factors}
           onSelect={select}
           onNodeLoaded={onNodeLoaded}
         />

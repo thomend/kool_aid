@@ -5,14 +5,15 @@ to a common origin (Swiss LV95), so the frontend can morph between the two.
 Data is columnar (flat coordinate lists) to keep the payload small and to
 load straight into GPU buffers.
 
-There is one cost space per heat-sensitivity profile and relief variant (tree
-shade and fountains each counted or not), built from the stored warp on first
-request and then cached.
+There is one cost space per heat-sensitivity profile and factor variant (tree
+shade, fountains and slope each counted or not), built from the stored warp on
+first request and then cached.
 
 Reads layout_warp and layout_meta (scripts/build_layout.py) and context_lines
 and context_labels (scripts/fetch_context.py).
 """
 
+import itertools
 import json
 import threading
 
@@ -34,7 +35,7 @@ GRID_REACH_M = 200  # grid is only drawn this close to the network
 
 
 class _Store:
-    """Cost-space payloads per (profile, trees, fountains), built on first request."""
+    """Cost-space payloads per (profile, trees, fountains, slope), built on first request."""
 
     def __init__(self):
         self.payloads: dict[tuple[str, bool, bool], bytes] = {}
@@ -45,21 +46,20 @@ class _Store:
         """Drop the cache and build the default variant, which also checks the tables.
 
         The other variants are then built in the background (~1 s each), so
-        switching profiles or relief is instant once they are done.
+        switching profiles or factors is instant once they are done.
         """
         with self.lock:
             self.payloads = {}
-        if self.get(DEFAULT_PROFILE, True, True) is not None:
+        if self.get(DEFAULT_PROFILE, True, True, True) is not None:
             threading.Thread(target=self._warm, daemon=True).start()
 
     def _warm(self):
         for profile in PROFILES:
-            for trees in (True, False):
-                for fountains in (True, False):
-                    self.get(profile, trees, fountains)
+            for trees, fountains, slope in itertools.product((True, False), repeat=3):
+                self.get(profile, trees, fountains, slope)
 
-    def get(self, profile, trees, fountains):
-        key = (profile, trees, fountains)
+    def get(self, profile, trees, fountains, slope):
+        key = (profile, trees, fountains, slope)
         with self.lock:  # one build at a time; the others wait and then hit the cache
             if key not in self.payloads:
                 try:
@@ -74,11 +74,12 @@ class _Store:
             return self.payloads[key]
 
 
-def _build(con, profile, trees, fountains):
-    variant = [profile, trees, fountains]
+def _build(con, profile, trees, fountains, slope):
+    variant = [profile, trees, fountains, slope]
     try:
         meta = con.sql(
-            "SELECT * FROM layout_meta WHERE profile = $1 AND trees = $2 AND fountains = $3",
+            """SELECT * FROM layout_meta
+               WHERE profile = $1 AND trees = $2 AND fountains = $3 AND slope = $4""",
             params=variant,
         ).fetchdf().iloc[0].to_dict()
         nodes = con.sql("""
@@ -88,7 +89,7 @@ def _build(con, profile, trees, fountains):
         edges = con.sql("""
             SELECT e.id, e.source, e.target, e.street_name, e.highway, e.is_pedestrian,
                    e.length_m, h.pet_mean_c, h.heat_excess_sq_mean, h.shade_share,
-                   h.fountain_share, e.wkt
+                   h.fountain_share, h.slope_excess, e.wkt
             FROM edges e JOIN edge_heat h ON h.edge_id = e.id
             WHERE e.component = 0
             ORDER BY e.id
@@ -182,6 +183,7 @@ def _build(con, profile, trees, fountains):
             "heat_excess_sq_mean": edges["heat_excess_sq_mean"].round(2).tolist(),
             "shade_share": edges["shade_share"].round(3).tolist(),
             "fountain_share": edges["fountain_share"].round(3).tolist(),
+            "slope_excess": edges["slope_excess"].round(4).tolist(),
             "start_indices": starts[:-1],
             "geo": _flat(geo_paths, origin),
             "cost": _flat(cost_paths, origin),
@@ -284,7 +286,7 @@ def _load_warp(con, variant):
     """
     x0, y0, step, nx, ny, moved = con.sql("""
         SELECT x0, y0, step_m, nx, ny, moved FROM layout_warp
-        WHERE profile = $1 AND trees = $2 AND fountains = $3
+        WHERE profile = $1 AND trees = $2 AND fountains = $3 AND slope = $4
     """, params=variant).fetchone()
     lattice = np.asarray(moved, dtype=float).reshape(nx, ny, 2)
 
@@ -315,11 +317,13 @@ store = _Store()
 
 
 @router.get("/cost-space", response_description="Columnar geo + cost-space coordinates")
-def get_cost_space(profile: str = DEFAULT_PROFILE, trees: bool = True, fountains: bool = True):
+def get_cost_space(
+    profile: str = DEFAULT_PROFILE, trees: bool = True, fountains: bool = True, slope: bool = True
+):
     """Node and edge positions in geographic and cost space, plus context landmarks.
 
     `profile` picks the heat-sensitivity profile the cost space is built for,
-    `trees` and `fountains` whether tree shade and fountains soften the cost.
+    `trees`, `fountains` and `slope` whether tree shade, fountains and slope count.
 
     Coordinates are flat [x0, y0, x1, y1, ...] lists in metres relative to
     `origin_lv95`. Edge paths are concatenated; `start_indices` gives the first
@@ -327,7 +331,7 @@ def get_cost_space(profile: str = DEFAULT_PROFILE, trees: bool = True, fountains
     """
     if profile not in PROFILES:
         raise HTTPException(422, f"profile must be one of {', '.join(PROFILES)}")
-    payload = store.get(profile, trees, fountains)
+    payload = store.get(profile, trees, fountains, slope)
     if payload is None:
         raise HTTPException(503, store.error or "Layout not loaded")
     return Response(payload, media_type="application/json")
