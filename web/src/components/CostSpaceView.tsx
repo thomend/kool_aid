@@ -8,9 +8,9 @@ import { LinearInterpolator, OrthographicView, type PickingInfo } from "@deck.gl
 import { PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
 import type { CostSpaceData, GraphMeta, RouteComparison } from "../api";
 import type { Scheme } from "../map/basemap";
-import { ACCENT, NO_DATA, ROUTE_COLOR, categoryOf } from "../map/style";
+import { ACCENT, HEAT_RATIOS, NO_DATA, ROUTE_COLOR, categoryOf } from "../map/style";
 import { costFactor, referenceMedian } from "../costModel";
-import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba } from "../colors";
+import { STREET_WIDTH_RATIO, edgeColorFn, edgeWidthAtZoom, hexToRgba, type RGBA } from "../colors";
 import { deckZoomToMap, lv95ToWgs84, mapZoomToDeck, wgs84ToLv95 } from "../geo";
 import { formatHeatRatio, formatHighway, formatLength, formatPet } from "../format";
 import type { Selection } from "./MapView";
@@ -317,15 +317,20 @@ export const CostSpaceView = forwardRef<CostSpaceHandle, Props>(function CostSpa
     return costPerMetre.map((f) => color(f));
   }, [costPerMetre, model, scheme, profile]);
 
-  // Cells take the street colour of the heat ratio their area stands for
-  // (area = ratio ^ exaggeration), so cells and streets share one legend
+  // Cells take the street colour of the cost ratio their area stands for
+  // (area = ratio ^ exaggeration), so cells and streets share one legend.
+  // Typical cells are transparent; the further from typical, the more opaque,
+  // fully so at the legend's ends.
   const cellColors = useMemo(() => {
-    if (!model) return data.context.cells.map(() => hexToRgba(NO_DATA[scheme]));
+    if (!model) return data.context.cells.map(() => hexToRgba(NO_DATA[scheme], 0));
     const color = edgeColorFn(model, scheme, profile);
     const reference = referenceMedian(model, profile);
-    return data.context.cells.map((c) =>
-      color(reference * Math.pow(c.area_ratio, 1 / data.meta.exaggeration)),
-    );
+    const ends = Math.log(HEAT_RATIOS[HEAT_RATIOS.length - 1]);
+    return data.context.cells.map((c) => {
+      const ratio = Math.pow(c.area_ratio, 1 / data.meta.exaggeration);
+      const [r, g, b] = color(reference * ratio);
+      return [r, g, b, Math.round(255 * Math.min(1, Math.abs(Math.log(ratio)) / ends))] as RGBA;
+    });
   }, [data, model, scheme, profile]);
 
   const nodeOpacity = Math.min(1, Math.max(0, (mapZoom - NODE_MIN_MAP_ZOOM) / 0.7));

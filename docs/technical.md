@@ -115,7 +115,7 @@ The cost space is a **density-equalising cartogram** (Gastner & Newman 2004):
 
 `EXAGGERATION` (in `build_layout.py`, 4) sets how strongly cost differences turn into area. One warp is computed per profile and factor combination (3 × 8 = 24, ~8 minutes).
 
-In the browser, the slider interpolates every vertex linearly between map position (0) and warped position (1). When the profile or a factor changes, the new warp is blended in from the old one over 0.9 s. The 250 m cells are coloured with the street colour of the cost ratio their area stands for (area^(1/exaggeration)), so size and colour always agree.
+In the browser, the slider interpolates every vertex linearly between map position (0) and warped position (1). When the profile or a factor changes, the new warp is blended in from the old one over 0.9 s. The 250 m cells are coloured with the street colour of the cost ratio their area stands for (area^(1/exaggeration)), so size and colour always agree; typical cells are transparent and become opaque towards the legend's ends.
 
 ### 4.7 Shortest and coolest route (`api/routing.py`)
 
