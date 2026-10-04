@@ -44,7 +44,11 @@ relief = (1 − 0.5 × shade_share) × (1 − 0.2 × fountain_share)
 - Relief only lowers the heat part, so missing trees or fountains never add cost.
 - **slope_excess**: how much longer walking takes than on the flat, from Tobler's hiking function made symmetric (uphill = downhill): +19 % at 5 %, +42 % at 10 % gradient, measured every 5 m. **weight** per profile: 0.5 (low), 1 (medium), 2 (high). Slope multiplies the whole cost: walking slower also means longer in the heat. On bridges and tunnels the height is interpolated between their ends.
 
-Colours, cost space and routes use the same formula. Colours and cost space are measured against a fixed reference, the median cost per metre **without** trees, fountains and slope, so switching a factor on visibly changes the city. In the cost space, area grows with (cost per metre ÷ reference)⁵. This exaggerates the effect to make it visible, so compare areas with each other, not with distances. Details: [scripts/cost_model.py](scripts/cost_model.py), [scripts/build_layout.py](scripts/build_layout.py).
+Colours, cost space and routes use the same formula. Colours and cost space are measured against a fixed reference, the median cost per metre **without** trees, fountains and slope, so switching a factor on visibly changes the city. In the cost space, area grows with a high power of (cost per metre ÷ reference), set by `EXAGGERATION`. This exaggerates the effect to make it visible, so compare areas with each other, not with distances. Details: [scripts/cost_model.py](scripts/cost_model.py), [scripts/build_layout.py](scripts/build_layout.py).
+
+## Technical documentation
+
+[docs/technical.md](docs/technical.md) covers the software architecture, the technologies, the procedures behind each feature (graph building, data joins, cost model, cartogram, routing), what is stored where, and what the PET heat data contains.
 
 ## Data
 
